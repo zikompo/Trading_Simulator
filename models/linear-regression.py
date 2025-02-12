@@ -1,7 +1,7 @@
-from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error
 import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
 
 def read_csv(path):
     """Read CSV file from the given path."""
@@ -10,17 +10,46 @@ def read_csv(path):
 def get_data():
     """Read data from CSV, split into features and target, then into training and test sets."""
     df = read_csv('data/data.csv')
+    print(f"Initial data shape: {df.shape}")
+    
+    # Drop the 'Unnamed: 0' column if it exists
+    if 'Unnamed: 0' in df.columns:
+        df = df.drop(columns=['Unnamed: 0'])
+    
     columns = df.columns
     features = columns[:-1]
+    
+    # Ensure all features are numeric
+    for feature in features:
+        if not pd.api.types.is_numeric_dtype(df[feature]):
+            print(f"Converting feature '{feature}' to numeric.")
+            df[feature] = pd.to_numeric(df[feature], errors='coerce')
+    
+    # Drop rows with NaN values that could not be converted
+    df = df.dropna()
+    print(f"Data shape after cleaning: {df.shape}")
+    
+    # Check if the dataset is empty
+    if df.empty:
+        print("The dataset is empty after preprocessing.")
+        return None, None, None, None
+    
     X = df[features]
     y = df['target']
+    
     # Using shuffle=False for time series data; remove if not needed
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+    print(f"Training data shape: {X_train.shape}, Test data shape: {X_test.shape}")
     return X_train, X_test, y_train, y_test
 
 def main():
     # Load the data
     X_train, X_test, y_train, y_test = get_data()
+    
+    # Check if the data is valid
+    if X_train is None or X_test is None or y_train is None or y_test is None:
+        print("No data available for training.")
+        return
     
     # Create a linear regression model
     model = LinearRegression()
@@ -33,11 +62,9 @@ def main():
     
     # Evaluate the model
     mse = mean_squared_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
     print(f'Mean Squared Error: {mse}')
-    
-    # Print model coefficients
-    print(f'Intercept: {model.intercept_}')
-    print(f'Coefficients: {model.coef_}')
+    print(f'R-squared: {r2}')
 
 if __name__ == "__main__":
     main()
