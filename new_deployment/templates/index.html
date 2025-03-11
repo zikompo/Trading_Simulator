@@ -1,0 +1,372 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Price Prediction</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            padding-top: 20px;
+            background-color: #f5f5f5;
+        }
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .card-header {
+            font-weight: bold;
+            background-color: #f8f9fa;
+        }
+        .prediction-card {
+            transition: transform 0.3s;
+        }
+        .prediction-card:hover {
+            transform: translateY(-5px);
+        }
+        .buy {
+            color: #28a745;
+            font-weight: bold;
+        }
+        .sell {
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .hold {
+            color: #ffc107;
+            font-weight: bold;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .header-container {
+            background-color: #343a40;
+            color: white;
+            padding: 20px 0;
+            margin-bottom: 30px;
+            border-radius: 5px;
+        }
+        #predictionImage {
+            width: 100%;
+            height: auto;
+            margin-top: 15px;
+        }
+        .custom-file-input::-webkit-file-upload-button {
+            visibility: hidden;
+        }
+        .custom-file-input::before {
+            content: 'Select model file';
+            display: inline-block;
+            background: linear-gradient(top, #f9f9f9, #e3e3e3);
+            border: 1px solid #999;
+            border-radius: 3px;
+            padding: 5px 8px;
+            outline: none;
+            white-space: nowrap;
+            cursor: pointer;
+            text-shadow: 1px 1px #fff;
+            font-weight: 700;
+            font-size: 10pt;
+        }
+        .custom-file-input:hover::before {
+            border-color: black;
+        }
+        .custom-file-input:active::before {
+            background: -webkit-linear-gradient(top, #e3e3e3, #f9f9f9);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header-container text-center">
+            <h1>Stock Price Prediction</h1>
+            <p class="lead">LSTM-based stock price forecasting</p>
+        </div>
+        
+        <div class="row">
+            <!-- Left Column: Input Form -->
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">Predict Stock Price</div>
+                    <div class="card-body">
+                        <form id="predictionForm">
+                            <div class="mb-3">
+                                <label for="symbol" class="form-label">Stock Symbol</label>
+                                <input type="text" class="form-control" id="symbol" name="symbol" placeholder="AAPL" required>
+                                <div class="form-text">Enter the stock symbol (e.g., AAPL for Apple)</div>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">Predict</button>
+                        </form>
+                        <div class="loading mt-3" id="loadingIndicator">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Loading...</span>
+                            </div>
+                            <p class="mt-2">Fetching data and making predictions...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">Available Models</div>
+                    <div class="card-body">
+                        <div id="modelsList">Loading available models...</div>
+                        <hr>
+                        <h6>Upload New Model</h6>
+                        <form id="uploadForm">
+                            <div class="mb-3">
+                                <label for="modelSymbol" class="form-label">Stock Symbol</label>
+                                <input type="text" class="form-control" id="modelSymbol" name="symbol" placeholder="AAPL" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="modelFile" class="form-label">Model File (.h5)</label>
+                                <input type="file" class="form-control custom-file-input" id="modelFile" name="model" accept=".h5" required>
+                            </div>
+                            <button type="submit" class="btn btn-secondary w-100">Upload Model</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right Column: Results -->
+            <div class="col-md-8">
+                <div class="card">
+                    <div class="card-header">Current Price Information</div>
+                    <div class="card-body">
+                        <div id="currentInfo">
+                            <p class="text-muted">Select a stock and click "Predict" to see information</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">Price Prediction Chart</div>
+                    <div class="card-body">
+                        <div id="chartContainer">
+                            <p class="text-muted">Select a stock and click "Predict" to see the chart</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="card">
+                    <div class="card-header">Trading Predictions</div>
+                    <div class="card-body">
+                        <div id="predictionsContainer">
+                            <p class="text-muted">Select a stock and click "Predict" to see predictions</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Bootstrap & jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        $(document).ready(function() {
+            // Load available models
+            loadAvailableModels();
+            
+            // Handle prediction form submission
+            $('#predictionForm').on('submit', function(e) {
+                e.preventDefault();
+                const symbol = $('#symbol').val().toUpperCase();
+                
+                if (!symbol) {
+                    alert('Please enter a stock symbol');
+                    return;
+                }
+                
+                // Show loading indicator
+                $('#loadingIndicator').show();
+                
+                // Clear previous results
+                $('#currentInfo').html('');
+                $('#chartContainer').html('');
+                $('#predictionsContainer').html('');
+                
+                // Send AJAX request
+                $.ajax({
+                    url: '/predict',
+                    method: 'POST',
+                    data: { symbol: symbol },
+                    success: function(response) {
+                        // Hide loading indicator
+                        $('#loadingIndicator').hide();
+                        
+                        // Display current price info
+                        $('#currentInfo').html(`
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <h3>${response.symbol}</h3>
+                                    <p>As of ${response.current_date}</p>
+                                </div>
+                                <div class="col-md-6 text-end">
+                                    <h2>$${response.current_price.toFixed(2)}</h2>
+                                    <p>Current Price</p>
+                                </div>
+                            </div>
+                        `);
+                        
+                        // Display prediction chart
+                        $('#chartContainer').html(`
+                            <img id="predictionImage" src="data:image/png;base64,${response.plot}" alt="Prediction Chart">
+                        `);
+                        
+                        // Display predictions table
+                        let predictionsHtml = `
+                            <div class="table-responsive">
+                                <table class="table table-striped">
+                                    <thead>
+                                        <tr>
+                                            <th>Day</th>
+                                            <th>Date</th>
+                                            <th>Price</th>
+                                            <th>Change</th>
+                                            <th>Decision</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                        `;
+                        
+                        // Get current date to calculate future dates
+                        const currentDate = new Date(response.current_date);
+                        
+                        response.predictions.forEach(pred => {
+                            // Calculate future date (skip weekends)
+                            let futureDate = new Date(currentDate);
+                            let daysToAdd = pred.day;
+                            let actualDaysAdded = 0;
+                            
+                            while (actualDaysAdded < daysToAdd) {
+                                futureDate.setDate(futureDate.getDate() + 1);
+                                // Skip weekends
+                                if (futureDate.getDay() !== 0 && futureDate.getDay() !== 6) {
+                                    actualDaysAdded++;
+                                }
+                            }
+                            
+                            const formattedDate = futureDate.toLocaleDateString();
+                            
+                            // Determine CSS class for decision
+                            let decisionClass = '';
+                            if (pred.decision === 'BUY') {
+                                decisionClass = 'buy';
+                            } else if (pred.decision === 'SELL') {
+                                decisionClass = 'sell';
+                            } else {
+                                decisionClass = 'hold';
+                            }
+                            
+                            // Format change percentage with + or - sign
+                            const changeFormatted = pred.expected_return > 0 ? 
+                                `+${pred.expected_return.toFixed(2)}%` : 
+                                `${pred.expected_return.toFixed(2)}%`;
+                            
+                            // Add table row for this prediction
+                            predictionsHtml += `
+                                <tr>
+                                    <td>${pred.day}</td>
+                                    <td>${formattedDate}</td>
+                                    <td>$${pred.predicted_price.toFixed(2)}</td>
+                                    <td>${changeFormatted}</td>
+                                    <td class="${decisionClass}">${pred.decision}</td>
+                                </tr>
+                            `;
+                        });
+                        
+                        predictionsHtml += `
+                                    </tbody>
+                                </table>
+                            </div>
+                        `;
+                        
+                        $('#predictionsContainer').html(predictionsHtml);
+                    },
+                    error: function(xhr) {
+                        // Hide loading indicator
+                        $('#loadingIndicator').hide();
+                        
+                        // Show error message
+                        const errorMsg = xhr.responseJSON ? xhr.responseJSON.error : 'An error occurred';
+                        alert('Error: ' + errorMsg);
+                    }
+                });
+            });
+            
+            // Handle model upload
+            $('#uploadForm').on('submit', function(e) {
+                e.preventDefault();
+                
+                const symbol = $('#modelSymbol').val().toUpperCase();
+                const modelFile = $('#modelFile')[0].files[0];
+                
+                if (!symbol || !modelFile) {
+                    alert('Please enter a stock symbol and select a model file');
+                    return;
+                }
+                
+                const formData = new FormData();
+                formData.append('symbol', symbol);
+                formData.append('model', modelFile);
+                
+                $.ajax({
+                    url: '/upload',
+                    method: 'POST',
+                    data: formData,
+                    contentType: false,
+                    processData: false,
+                    success: function(response) {
+                        alert('Model uploaded successfully!');
+                        $('#modelSymbol').val('');
+                        $('#modelFile').val('');
+                        loadAvailableModels();
+                    },
+                    error: function(xhr) {
+                        const errorMsg = xhr.responseJSON ? xhr.responseJSON.error : 'An error occurred';
+                        alert('Error: ' + errorMsg);
+                    }
+                });
+            });
+            
+            // Function to load available models
+            function loadAvailableModels() {
+                $.ajax({
+                    url: '/available-models',
+                    method: 'GET',
+                    success: function(response) {
+                        if (response.models.length > 0) {
+                            let modelsHtml = '<p>Available models for:</p><ul>';
+                            response.models.forEach(symbol => {
+                                modelsHtml += `<li><a href="#" class="model-link">${symbol}</a></li>`;
+                            });
+                            modelsHtml += '</ul>';
+                            $('#modelsList').html(modelsHtml);
+                            
+                            // Add click event for model links
+                            $('.model-link').on('click', function(e) {
+                                e.preventDefault();
+                                const symbol = $(this).text();
+                                $('#symbol').val(symbol);
+                                $('#predictionForm').submit();
+                            });
+                        } else {
+                            $('#modelsList').html('<p>No models available. Please upload a model first.</p>');
+                        }
+                    },
+                    error: function() {
+                        $('#modelsList').html('<p>Error loading models.</p>');
+                    }
+                });
+            }
+        });
+    </script>
+</body>
+</html>
