@@ -33,9 +33,15 @@ function App() {
     }
     setLoading(true);
     setPredictionResult(null);
-
+  
     try {
-      const res = await axios.post('/predict', { symbol: symbol.toUpperCase() });
+      // Use URLSearchParams to encode data as form data
+      const formData = new URLSearchParams();
+      formData.append('symbol', symbol.toUpperCase());
+  
+      const res = await axios.post('/predict', formData, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      });
       setPredictionResult(res.data);
     } catch (error) {
       const errMsg = error.response?.data?.error || 'An error occurred';
@@ -44,6 +50,7 @@ function App() {
       setLoading(false);
     }
   };
+  
 
   const handleUploadSubmit = async (e) => {
     e.preventDefault();
