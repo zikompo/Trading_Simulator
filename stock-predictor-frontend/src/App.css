@@ -36,3 +36,445 @@
     transform: rotate(360deg);
   }
 }
+
+/* Global styles and variables */
+:root {
+  --primary-color: #3b82f6;
+  --primary-dark: #2563eb;
+  --secondary-color: #64748b;
+  --accent-color: #10b981;
+  --danger-color: #ef4444;
+  --warning-color: #f59e0b;
+  --text-primary: #1e293b;
+  --text-secondary: #64748b;
+  --text-light: #94a3b8;
+  --bg-primary: #f8fafc;
+  --bg-card: #ffffff;
+  --border-color: #e2e8f0;
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --radius: 0.5rem;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Base styling */
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  margin: 0;
+  padding: 0;
+  line-height: 1.5;
+}
+
+.app-container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+h1, h2, h3, h4, p {
+  margin: 0;
+}
+
+/* Header styling */
+.header {
+  text-align: center;
+  margin-bottom: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.header h1 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--primary-color);
+  margin-bottom: 0.5rem;
+}
+
+.header p {
+  color: var(--text-secondary);
+  font-size: 1.1rem;
+}
+
+/* Layout grid */
+.content-grid {
+  display: grid;
+  grid-template-columns: 350px 1fr;
+  gap: 2rem;
+}
+
+/* Card styling */
+.card {
+  background-color: var(--bg-card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.card h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1.25rem;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Form styling */
+.input-group {
+  margin-bottom: 1.25rem;
+}
+
+.input-group label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.input-group input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  font-size: 1rem;
+  background-color: var(--bg-primary);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.input-group input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.input-group small {
+  display: block;
+  color: var(--text-light);
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.file-upload {
+  position: relative;
+}
+
+.file-upload input[type="file"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.file-upload .file-info {
+  display: block;
+  padding: 0.75rem;
+  background-color: var(--bg-primary);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius);
+  margin-top: 0.5rem;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+/* Button styling */
+.btn {
+  display: block;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: none;
+  border-radius: var(--radius);
+  font-weight: 500;
+  font-size: 1rem;
+  cursor: pointer;
+  text-align: center;
+  transition: all 0.2s;
+}
+
+.primary-btn {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.primary-btn:hover {
+  background-color: var(--primary-dark);
+}
+
+.secondary-btn {
+  background-color: var(--secondary-color);
+  color: white;
+}
+
+.secondary-btn:hover {
+  background-color: #475569;
+}
+
+/* Models list styling */
+.models-list {
+  margin-bottom: 1rem;
+}
+
+.models-list p {
+  margin-bottom: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.model-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.model-chip {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 2rem;
+  padding: 0.4rem 1rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.model-chip:hover {
+  background-color: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+}
+
+/* Loading indicators */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 300px;
+}
+
+.loader {
+  width: 48px;
+  height: 48px;
+  border: 4px solid var(--border-color);
+  border-top: 4px solid var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 1rem;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-top: 2px solid white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Placeholder message */
+.placeholder-message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  height: 400px;
+  background-color: var(--bg-card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 2rem;
+}
+
+.placeholder-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+}
+
+.placeholder-message h2 {
+  margin-bottom: 0.5rem;
+  font-size: 1.5rem;
+}
+
+.placeholder-message p {
+  color: var(--text-secondary);
+}
+
+/* Current price card */
+.current-price-card {
+  background-color: var(--bg-card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.price-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.price-header h2 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.date-info {
+  color: var(--text-light);
+  font-size: 0.875rem;
+}
+
+.price-display {
+  text-align: right;
+}
+
+.price-display h1 {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--primary-color);
+  margin-bottom: 0.25rem;
+}
+
+/* Chart styling */
+.chart-card {
+  overflow: hidden;
+}
+
+.chart-container {
+  margin: 0 -1.5rem -1.5rem -1.5rem;
+  background-color: white;
+}
+
+.prediction-chart {
+  width: 100%;
+  display: block;
+}
+
+/* Table styling */
+.table-container {
+  overflow-x: auto;
+  margin: 0 -1.5rem -1.5rem -1.5rem;
+}
+
+.prediction-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+
+.prediction-table th {
+  background-color: var(--bg-primary);
+  color: var(--text-secondary);
+  font-weight: 500;
+  text-align: left;
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.prediction-table td {
+  padding: 1rem;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.prediction-table tr:last-child td {
+  border-bottom: none;
+}
+
+.price-cell {
+  font-weight: 500;
+}
+
+.positive-change {
+  color: var(--accent-color);
+  font-weight: 500;
+}
+
+.negative-change {
+  color: var(--danger-color);
+  font-weight: 500;
+}
+
+.signal-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.signal-badge.buy {
+  background-color: rgba(16, 185, 129, 0.1);
+  color: var(--accent-color);
+}
+
+.signal-badge.sell {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: var(--danger-color);
+}
+
+.signal-badge.hold {
+  background-color: rgba(245, 158, 11, 0.1);
+  color: var(--warning-color);
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  .content-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .sidebar {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+  
+  .predict-card {
+    grid-column: 1;
+  }
+  
+  .models-card, .upload-card {
+    margin-bottom: 0;
+  }
+  
+  .upload-card {
+    grid-column: 2;
+    grid-row: span 2;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-container {
+    padding: 1rem;
+  }
+  
+  .sidebar {
+    grid-template-columns: 1fr;
+  }
+  
+  .upload-card {
+    grid-column: 1;
+  }
+  
+  .price-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  
+  .price-display {
+    text-align: left;
+    margin-top: 1rem;
+  }
+}

@@ -1,7 +1,6 @@
-// src/App.js
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import './App.css'; // For any custom styling
+import './App.css';
 
 function App() {
   const [symbol, setSymbol] = useState('');
@@ -11,7 +10,6 @@ function App() {
   const [predictionResult, setPredictionResult] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
 
-  // Load available models on mount
   useEffect(() => {
     loadAvailableModels();
   }, []);
@@ -35,7 +33,6 @@ function App() {
     setPredictionResult(null);
   
     try {
-      // Use URLSearchParams to encode data as form data
       const formData = new URLSearchParams();
       formData.append('symbol', symbol.toUpperCase());
   
@@ -50,7 +47,6 @@ function App() {
       setLoading(false);
     }
   };
-  
 
   const handleUploadSubmit = async (e) => {
     e.preventDefault();
@@ -76,7 +72,6 @@ function App() {
     }
   };
 
-  // Helper to compute future date from current_date skipping weekends
   const computeFutureDate = (baseDate, daysAhead) => {
     let futureDate = new Date(baseDate);
     let actualDaysAdded = 0;
@@ -91,190 +86,186 @@ function App() {
   };
 
   return (
-    <div className="container">
-      <header className="header-container text-center my-4 p-4 bg-dark text-white rounded">
-        <h1>Stock Price Prediction</h1>
-        <p className="lead">LSTM-based stock price forecasting</p>
-      </header>
+    <div className="app-container">
+      <div className="header">
+        <h1>StockSense</h1>
+        <p>Advanced LSTM-based stock price forecasting</p>
+      </div>
 
-      <div className="row">
-        {/* Left Column: Input Form and Model Upload */}
-        <div className="col-md-4">
-          <div className="card mb-4 shadow-sm">
-            <div className="card-header">Predict Stock Price</div>
-            <div className="card-body">
-              <form onSubmit={handlePredictSubmit}>
-                <div className="mb-3">
-                  <label htmlFor="symbol" className="form-label">Stock Symbol</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    id="symbol"
-                    placeholder="AAPL"
-                    value={symbol}
-                    onChange={(e) => setSymbol(e.target.value)}
-                    required
-                  />
-                  <div className="form-text">Enter the stock symbol (e.g., AAPL for Apple)</div>
-                </div>
-                <button type="submit" className="btn btn-primary w-100">Predict</button>
-              </form>
-              {loading && (
-                <div className="loading mt-3 text-center">
-                  <div className="spinner-border text-primary" role="status">
-                    <span className="visually-hidden">Loading...</span>
-                  </div>
-                  <p className="mt-2">Fetching data and making predictions...</p>
-                </div>
-              )}
-            </div>
+      <div className="content-grid">
+        {/* Left column: Inputs and controls */}
+        <div className="sidebar">
+          <div className="card predict-card">
+            <h2>Predict Stock</h2>
+            <form id="predictForm" onSubmit={handlePredictSubmit}>
+              <div className="input-group">
+                <label htmlFor="symbol">Stock Symbol</label>
+                <input
+                  type="text"
+                  id="symbol"
+                  placeholder="e.g., AAPL"
+                  value={symbol}
+                  onChange={(e) => setSymbol(e.target.value)}
+                  required
+                />
+                <small>Enter stock ticker symbol (AAPL, MSFT, etc.)</small>
+              </div>
+              <button type="submit" className="btn primary-btn">
+                {loading ? (
+                  <span className="loading-spinner"></span>
+                ) : (
+                  "Generate Prediction"
+                )}
+              </button>
+            </form>
           </div>
 
-          <div className="card mb-4 shadow-sm">
-            <div className="card-header">Available Models</div>
-            <div className="card-body">
-              {availableModels.length > 0 ? (
-                <>
-                  <p>Available models for:</p>
-                  <ul>
-                    {availableModels.map((m) => (
-                      <li key={m}>
-                        <button
-                          className="btn btn-link p-0"
-                          onClick={() => {
-                            setSymbol(m);
-                            // Trigger prediction on click:
-                            setTimeout(() => document.getElementById('predictForm')?.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true })), 0);
-                          }}
-                        >
-                          {m}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              ) : (
-                <p>No models available. Please upload a model first.</p>
-              )}
-              <hr />
-              <h6>Upload New Model</h6>
-              <form onSubmit={handleUploadSubmit}>
-                <div className="mb-3">
-                  <label htmlFor="modelSymbol" className="form-label">Stock Symbol</label>
-                  <input
-                    type="text"
-                    className="form-control"
-                    id="modelSymbol"
-                    placeholder="AAPL"
-                    value={modelSymbol}
-                    onChange={(e) => setModelSymbol(e.target.value)}
-                    required
-                  />
+          <div className="card models-card">
+            <h2>Models Library</h2>
+            {availableModels.length > 0 ? (
+              <div className="models-list">
+                <p>Select from available models:</p>
+                <div className="model-chips">
+                  {availableModels.map((m) => (
+                    <button
+                      key={m}
+                      className="model-chip"
+                      onClick={() => {
+                        setSymbol(m);
+                        setTimeout(() => document.getElementById('predictForm')?.dispatchEvent(
+                          new Event('submit', { cancelable: true, bubbles: true })
+                        ), 0);
+                      }}
+                    >
+                      {m}
+                    </button>
+                  ))}
                 </div>
-                <div className="mb-3">
-                  <label htmlFor="modelFile" className="form-label">Model File (.h5)</label>
-                  <input
-                    type="file"
-                    className="form-control"
-                    id="modelFile"
-                    accept=".h5"
-                    onChange={(e) => setModelFile(e.target.files[0])}
-                    required
-                  />
-                </div>
-                <button type="submit" className="btn btn-secondary w-100">Upload Model</button>
-              </form>
-            </div>
+              </div>
+            ) : (
+              <p className="no-models">No models available. Upload one below.</p>
+            )}
+          </div>
+
+          <div className="card upload-card">
+            <h2>Upload New Model</h2>
+            <form onSubmit={handleUploadSubmit}>
+              <div className="input-group">
+                <label htmlFor="modelSymbol">Stock Symbol</label>
+                <input
+                  type="text"
+                  id="modelSymbol"
+                  placeholder="e.g., AAPL"
+                  value={modelSymbol}
+                  onChange={(e) => setModelSymbol(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="input-group file-upload">
+                <label htmlFor="modelFile">Model File (.h5)</label>
+                <input
+                  type="file"
+                  id="modelFile"
+                  accept=".h5"
+                  onChange={(e) => setModelFile(e.target.files[0])}
+                  required
+                />
+                <span className="file-info">
+                  {modelFile ? modelFile.name : "No file selected"}
+                </span>
+              </div>
+              <button type="submit" className="btn secondary-btn">
+                Upload Model
+              </button>
+            </form>
           </div>
         </div>
 
-        {/* Right Column: Results */}
-        <div className="col-md-8">
-          {/* Current Price Information */}
-          <div className="card mb-4 shadow-sm">
-            <div className="card-header">Current Price Information</div>
-            <div className="card-body">
-              {predictionResult ? (
-                <div className="row">
-                  <div className="col-md-6">
-                    <h3>{predictionResult.symbol}</h3>
-                    <p>As of {predictionResult.current_date}</p>
+        {/* Right column: Results */}
+        <div className="main-content">
+          {!predictionResult && !loading && (
+            <div className="placeholder-message">
+              <div className="placeholder-icon">📈</div>
+              <h2>Select a stock to view predictions</h2>
+              <p>Enter a stock symbol or choose from available models</p>
+            </div>
+          )}
+
+          {loading && (
+            <div className="loading-container">
+              <div className="loader"></div>
+              <p>Analyzing market data and generating predictions...</p>
+            </div>
+          )}
+
+          {predictionResult && (
+            <>
+              <div className="current-price-card">
+                <div className="price-header">
+                  <div>
+                    <h2>{predictionResult.symbol}</h2>
+                    <p className="date-info">Data as of {predictionResult.current_date}</p>
                   </div>
-                  <div className="col-md-6 text-end">
-                    <h2>${parseFloat(predictionResult.current_price).toFixed(2)}</h2>
+                  <div className="price-display">
+                    <h1>${parseFloat(predictionResult.current_price).toFixed(2)}</h1>
                     <p>Current Price</p>
                   </div>
                 </div>
-              ) : (
-                <p className="text-muted">Select a stock and click "Predict" to see information</p>
-              )}
-            </div>
-          </div>
+              </div>
 
-          {/* Prediction Chart */}
-          <div className="card mb-4 shadow-sm">
-            <div className="card-header">Price Prediction Chart</div>
-            <div className="card-body">
-              {predictionResult ? (
-                <img
-                  id="predictionImage"
-                  src={`data:image/png;base64,${predictionResult.plot}`}
-                  alt="Prediction Chart"
-                  className="img-fluid"
-                />
-              ) : (
-                <p className="text-muted">Select a stock and click "Predict" to see the chart</p>
-              )}
-            </div>
-          </div>
+              <div className="card chart-card">
+                <h2>Price Forecast</h2>
+                <div className="chart-container">
+                  <img
+                    src={`data:image/png;base64,${predictionResult.plot}`}
+                    alt={`${predictionResult.symbol} Price Prediction Chart`}
+                    className="prediction-chart"
+                  />
+                </div>
+              </div>
 
-          {/* Trading Predictions */}
-          <div className="card mb-4 shadow-sm">
-            <div className="card-header">Trading Predictions</div>
-            <div className="card-body">
-              {predictionResult ? (
-                <div className="table-responsive">
-                  <table className="table table-striped">
+              <div className="card prediction-table-card">
+                <h2>Trading Signals</h2>
+                <div className="table-container">
+                  <table className="prediction-table">
                     <thead>
                       <tr>
                         <th>Day</th>
                         <th>Date</th>
-                        <th>Price</th>
-                        <th>Change</th>
-                        <th>Decision</th>
+                        <th>Predicted Price</th>
+                        <th>Expected Change</th>
+                        <th>Signal</th>
                       </tr>
                     </thead>
                     <tbody>
                       {predictionResult.predictions.map((pred) => {
                         const futureDate = computeFutureDate(predictionResult.current_date, pred.day);
-                        const decisionClass =
-                          pred.decision === 'BUY'
-                            ? 'text-success fw-bold'
-                            : pred.decision === 'SELL'
-                            ? 'text-danger fw-bold'
-                            : 'text-warning fw-bold';
-                        const changeFormatted =
-                          pred.expected_return > 0
-                            ? `+${pred.expected_return.toFixed(2)}%`
-                            : `${pred.expected_return.toFixed(2)}%`;
+                        const changeFormatted = pred.expected_return > 0
+                          ? `+${pred.expected_return.toFixed(2)}%`
+                          : `${pred.expected_return.toFixed(2)}%`;
+                        
                         return (
                           <tr key={pred.day}>
                             <td>{pred.day}</td>
                             <td>{futureDate}</td>
-                            <td>${pred.predicted_price.toFixed(2)}</td>
-                            <td>{changeFormatted}</td>
-                            <td className={decisionClass}>{pred.decision}</td>
+                            <td className="price-cell">${pred.predicted_price.toFixed(2)}</td>
+                            <td className={pred.expected_return >= 0 ? "positive-change" : "negative-change"}>
+                              {changeFormatted}
+                            </td>
+                            <td>
+                              <span className={`signal-badge ${pred.decision.toLowerCase()}`}>
+                                {pred.decision}
+                              </span>
+                            </td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
                 </div>
-              ) : (
-                <p className="text-muted">Select a stock and click "Predict" to see predictions</p>
-              )}
-            </div>
-          </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
