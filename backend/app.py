@@ -203,7 +203,6 @@ def predict():
         # Check if we have a saved model for this symbol
         model_path = os.path.join(app.config['MODEL_FOLDER'], f'{symbol}_lstm_model.h5')
         print(model_path)
-        # If no model exists, return error
         if not os.path.exists(model_path):
             return jsonify({'error': f'No trained model found for {symbol}. Please upload a model first.'}), 404
         
@@ -224,18 +223,26 @@ def predict():
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
             
-        # Get current price
+        # Get current price and last date
         current_price = stock_data['close'].iloc[-1]
         last_date = stock_data['date'].iloc[-1]
         
+        # Get the number of days to predict from the form data, default to 10 if not provided
+        days_ahead_param = request.form.get('days_ahead', '10')
+        try:
+            days_ahead = int(days_ahead_param)
+            if days_ahead <= 0:
+                raise ValueError("days_ahead must be a positive integer")
+        except ValueError:
+            return jsonify({'error': 'Invalid value for days_ahead. Please provide a positive integer.'}), 400
+        
         # Make predictions
-        days_ahead = 10
         predictions = predict_future_prices(model, sequence, scaler, days_ahead)
         
         # Get trading decisions
         results = make_trading_decisions(predictions, current_price)
         
-        # Create plot
+        # Create plot (uses the number of prediction days based on results length)
         plot_data = create_prediction_plot(stock_data, results, symbol)
         
         # Return results

@@ -4,6 +4,7 @@ import './App.css';
 
 function App() {
   const [symbol, setSymbol] = useState('');
+  const [daysAhead, setDaysAhead] = useState(10); // New state for custom days ahead
   const [modelSymbol, setModelSymbol] = useState('');
   const [modelFile, setModelFile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -35,7 +36,9 @@ function App() {
     try {
       const formData = new URLSearchParams();
       formData.append('symbol', symbol.toUpperCase());
-  
+      // Append the custom days ahead value
+      formData.append('days_ahead', daysAhead);
+
       const res = await axios.post('/predict', formData, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
@@ -109,6 +112,20 @@ function App() {
                   required
                 />
                 <small>Enter stock ticker symbol (AAPL, MSFT, etc.)</small>
+              </div>
+              {/* New input for custom prediction days */}
+              <div className="input-group">
+                <label htmlFor="daysAhead">Days Ahead</label>
+                <input
+                  type="number"
+                  id="daysAhead"
+                  placeholder="e.g., 10"
+                  value={daysAhead}
+                  onChange={(e) => setDaysAhead(e.target.value)}
+                  min="1"
+                  required
+                />
+                <small>Enter number of days to predict</small>
               </div>
               <button type="submit" className="btn primary-btn">
                 {loading ? (
