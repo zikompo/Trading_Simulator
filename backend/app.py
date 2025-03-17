@@ -1,9 +1,13 @@
 # app.py - Flask application for stock prediction
 import os
+from database import get_latest_model, store_model
+import asyncio
 import requests
 import pandas as pd
 import numpy as np
 import json
+from database import get_all_models
+
 from datetime import datetime
 import time
 import matplotlib
@@ -189,6 +193,10 @@ def home():
     """Render the home page"""
     return render_template('index.html')
 
+def allowed_file(filename):
+    """Check if file has allowed extension"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
 @app.route('/predict', methods=['POST'])
 def predict():
     """Handle stock prediction requests"""
@@ -197,15 +205,16 @@ def predict():
         symbol = request.form.get('symbol')
         if not symbol:
             return jsonify({'error': 'No stock symbol provided'}), 400
-            
+
         symbol = symbol.upper()
-        
-        # Check if we have a saved model for this symbol
-        model_path = os.path.join(app.config['MODEL_FOLDER'], f'{symbol}_lstm_model.h5')
-        print(model_path)
-        if not os.path.exists(model_path):
+
+        # Fetch model path from the database instead of assuming it's in 'models/'
+        model_path = asyncio.run(get_latest_model(symbol))
+
+        # If no model exists, return error
+        if not model_path or not os.path.exists(model_path):
             return jsonify({'error': f'No trained model found for {symbol}. Please upload a model first.'}), 404
-        
+
         # Fetch latest data for this symbol
         try:
             stock_data = get_alpha_vantage_data(symbol, API_KEY)
@@ -213,20 +222,20 @@ def predict():
             stock_data.to_csv(data_path)
         except Exception as e:
             return jsonify({'error': f'Error fetching data for {symbol}: {str(e)}'}), 500
-            
+
         # Load the model
         model = load_model(model_path)
-        
+
         # Prepare data for prediction
         try:
             sequence, scaler = prepare_latest_data(stock_data)
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
-            
+
         # Get current price and last date
         current_price = stock_data['close'].iloc[-1]
         last_date = stock_data['date'].iloc[-1]
-        
+
         # Get the number of days to predict from the form data, default to 10 if not provided
         days_ahead_param = request.form.get('days_ahead', '10')
         try:
@@ -235,16 +244,16 @@ def predict():
                 raise ValueError("days_ahead must be a positive integer")
         except ValueError:
             return jsonify({'error': 'Invalid value for days_ahead. Please provide a positive integer.'}), 400
-        
+
         # Make predictions
         predictions = predict_future_prices(model, sequence, scaler, days_ahead)
-        
+
         # Get trading decisions
         results = make_trading_decisions(predictions, current_price)
-        
+
         # Create plot (uses the number of prediction days based on results length)
         plot_data = create_prediction_plot(stock_data, results, symbol)
-        
+
         # Return results
         return jsonify({
             'symbol': symbol,
@@ -253,7 +262,7 @@ def predict():
             'predictions': results,
             'plot': plot_data
         })
-        
+
     except Exception as e:
         return jsonify({'error': f'Error making prediction: {str(e)}'}), 500
 
@@ -262,34 +271,36 @@ def upload_model():
     """Handle model upload"""
     if 'model' not in request.files:
         return jsonify({'error': 'No file part'}), 400
-        
+
     file = request.files['model']
     symbol = request.form.get('symbol')
-    
+
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
-        
+
     if not symbol:
         return jsonify({'error': 'No stock symbol provided'}), 400
-        
+
     symbol = symbol.upper()
-    
+
     if file and allowed_file(file.filename):
-        filename = f'{symbol}_lstm_model.h5'
-        file.save(os.path.join(app.config['MODEL_FOLDER'], filename))
-        return jsonify({'success': f'Model uploaded for {symbol}'}), 200
+        filename = f'{symbol}.h5'  # Store without `_lstm_model` suffix
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
+
+        # Store model path in database
+        asyncio.run(store_model(symbol, file_path))
+
+        return jsonify({'success': f'Model uploaded and stored in DB for {symbol}'}), 200
     else:
         return jsonify({'error': 'Invalid file type. Only .h5 files are allowed.'}), 400
-        
+
 @app.route('/available-models')
 def available_models():
-    """Return a list of available models"""
-    models = []
-    for filename in os.listdir(app.config['MODEL_FOLDER']):
-        if filename.endswith('_lstm_model.h5'):
-            symbol = filename.split('_')[0]
-            models.append(symbol)
+    """Return a list of available models from the database"""
+    models = asyncio.run(get_all_models())
     return jsonify({'models': models})
+
 
 # Run the application
 if __name__ == '__main__':
