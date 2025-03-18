@@ -10,7 +10,7 @@ def read_csv(path):
 
 def get_data():
     # Load the data
-    df = read_csv('data/data.csv')
+    df = read_csv('../data/data.csv')
     # Rename and drop the date column if it's not needed for prediction
     df.columns = ['date'] + list(df.columns[1:])
     df = df.drop(columns=['date']) 
@@ -67,6 +67,9 @@ def main():
     r2 = r2_score(y_test, y_pred)
     print(f'Mean Squared Error: {mse}')
     print(f'R-squared: {r2}')
+    import pickle  
+    with open(f'../backend/models/knn_model.pkl', "wb") as f:  
+        pickle.dump(model, f)  # Save  
 
 if __name__ == '__main__':
     main()

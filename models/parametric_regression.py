@@ -288,7 +288,7 @@ def make_trading_decision(model, latest_data, scaler, features_shape=5, threshol
 
 def main():
     # 1) Load your CSV data
-    df = pd.read_csv('data/stock_data.csv', index_col=None)
+    df = pd.read_csv('../data/stock_data.csv', index_col=None)
     df['date'] = pd.to_datetime(df['date'])
     
     # 2) Select a stock symbol
@@ -368,6 +368,9 @@ def main():
     print(f"\nCurrent price: {current_price:.2f}")
     print(f"Predicted next day's close: {next_price:.2f}")
     print(f"Trading decision: {decision.upper()}")
+    import pickle  
+    with open(f'../backend/models/{target_symbol}_parametric_regression_model.pkl', "wb") as f:  
+        pickle.dump(model, f)  # Save  
 
 
 if __name__ == "__main__":
@@ -386,7 +389,7 @@ if __name__ == "__main__":
         """
         print(f"\nRunning model for {symbol} with {train_days} training days and {sequence_length} sequence length")
         
-        df = pd.read_csv('data/stock_data.csv', index_col=None)
+        df = pd.read_csv('../data/stock_data.csv', index_col=None)
         df['date'] = pd.to_datetime(df['date'])
         
         X_train, X_test, y_train, y_test, scaler, dates_test = prepare_data_linear_regression(
@@ -395,8 +398,7 @@ if __name__ == "__main__":
         
         model = train_linear_regression(X_train, y_train)
         predictions, actual, dates = evaluate_model(model, X_test, y_test, scaler, dates_test)
-        plot_results(actual, predictions, symbol, dates)
-        
+        plot_results(actual, predictions, symbol, dates)   
         return model, scaler, (predictions, actual, dates)
     
     # Example: run with different parameters
