@@ -1,15 +1,15 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
 generator client {
   provider = "prisma-client-js"
 }
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")  /
-}
-
 model Model {
-  id          Int     @id @default(autoincrement())  // Unique ID for each model
-  stockSymbol String                                // Stock symbol (e.g., AAPL, MSFT)
-  filePath    String                                // Path to the .h5 model file
-  createdAt   DateTime @default(now())              // Timestamp of when model was added
+  id          Int     @id @default(autoincrement())
+  stockSymbol String
+  filePath    String
+  createdAt   DateTime @default(now())
 }

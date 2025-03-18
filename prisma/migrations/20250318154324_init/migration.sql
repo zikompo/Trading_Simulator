@@ -1,0 +1,7 @@
+-- CreateTable
+CREATE TABLE "Model" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "stockSymbol" TEXT NOT NULL,
+    "filePath" TEXT NOT NULL,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
