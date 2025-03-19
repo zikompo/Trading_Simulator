@@ -6,8 +6,7 @@ import requests
 import pandas as pd
 import numpy as np
 import json
-from database import get_all_models
-
+from database import get_latest_model, store_model, get_all_models
 from datetime import datetime
 import time
 import matplotlib
@@ -20,6 +19,8 @@ from flask import Flask, request, render_template, jsonify, send_file
 import io
 import base64
 from werkzeug.utils import secure_filename
+import nest_asyncio
+
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -28,7 +29,7 @@ app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
 MODEL_FOLDER = 'models'
 DATA_FOLDER = 'data'
-ALLOWED_EXTENSIONS = {'h5'}
+ALLOWED_EXTENSIONS = {'h5','pkl'}
 API_KEY = 'TKZMZK2F3VMKJ58C'  # Replace with your Alpha Vantage API key
 
 # Create necessary directories
@@ -38,6 +39,39 @@ for folder in [UPLOAD_FOLDER, MODEL_FOLDER, DATA_FOLDER]:
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MODEL_FOLDER'] = MODEL_FOLDER
 app.config['DATA_FOLDER'] = DATA_FOLDER
+
+nest_asyncio.apply()
+
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+def register_local_models():
+    """
+    On startup, scan backend/models/ for any .h5 files
+    and register them in MongoDB so they're known to the app.
+    """
+    folder_path = os.path.join('backend', 'models')
+    if not os.path.exists(folder_path):
+        print(f"Model folder not found at {folder_path}, skipping auto-register.")
+        return
+    
+    for file_name in os.listdir(folder_path):
+        if file_name.endswith('.h5') or file_name.endswith('.pkl'):
+            # Derive the symbol from the filename (e.g., "AAPL" from "AAPL.h5")
+            symbol = file_name.rsplit('.', 1)[0].upper()
+            
+            # Full path to the .h5 file
+            file_path = os.path.join(folder_path, file_name)
+
+            # Async register in MongoDB
+            loop.run_until_complete(store_model(symbol, file_path))
+            print(f"Registered local model for {symbol} -> {file_path}")
+
+# Flask Routes
+@app.route('/available-models')
+def available_models():
+    """Return a list of available models from the database"""
+    models = loop.run_until_complete(get_all_models())  # Use existing event loop
+    return jsonify({'models': models})
 
 # Helper Functions
 def allowed_file(filename):
@@ -295,13 +329,9 @@ def upload_model():
     else:
         return jsonify({'error': 'Invalid file type. Only .h5 files are allowed.'}), 400
 
-@app.route('/available-models')
-def available_models():
-    """Return a list of available models from the database"""
-    models = asyncio.run(get_all_models())
-    return jsonify({'models': models})
 
 
 # Run the application
 if __name__ == '__main__':
+    register_local_models()
     app.run(debug=True, host='0.0.0.0', port=4080)

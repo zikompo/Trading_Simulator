@@ -5,7 +5,10 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 load_dotenv()
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://your_mongodb_uri")  # Replace with your MongoDB URI
+MONGO_URI = os.getenv(
+    "MONGO_URI", 
+    "mongodb+srv://tusharpatangemohan:csc392database@cluster0.qaks2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+)
 db_client = AsyncIOMotorClient(MONGO_URI)
 db = db_client["trading_simulator"]  # Use your preferred database name
 models_collection = db["models"]
