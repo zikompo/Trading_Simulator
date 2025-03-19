@@ -243,7 +243,8 @@ def predict():
         symbol = symbol.upper()
 
         # Fetch model path from the database instead of assuming it's in 'models/'
-        model_path = asyncio.run(get_latest_model(symbol))
+        loop = asyncio.get_running_loop()
+        model_path = loop.run_until_complete(get_latest_model(symbol))
 
         # If no model exists, return error
         if not model_path or not os.path.exists(model_path):
