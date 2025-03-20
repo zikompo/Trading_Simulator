@@ -5,3 +5,4 @@ node_modules
 *myenv*
 *__pycache__*
 *python-version*
+*venv*
