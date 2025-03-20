@@ -41,12 +41,13 @@ app.config['MODEL_FOLDER'] = MODEL_FOLDER
 app.config['DATA_FOLDER'] = DATA_FOLDER
 
 nest_asyncio.apply()
+loop = asyncio.get_event_loop()
 
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
+nest_asyncio.apply()
+loop = asyncio.get_event_loop()
 def register_local_models():
     """
-    On startup, scan backend/models/ for any .h5 files
+    On startup, scan backend/models/ for any .h5 or .pkl files
     and register them in MongoDB so they're known to the app.
     """
     folder_path = os.path.join('backend', 'models')
@@ -56,24 +57,21 @@ def register_local_models():
     
     for file_name in os.listdir(folder_path):
         if file_name.endswith('.h5') or file_name.endswith('.pkl'):
-            # Derive the symbol from the filename (e.g., "AAPL" from "AAPL.h5")
             symbol = file_name.rsplit('.', 1)[0].upper()
-            
-            # Full path to the .h5 file
             file_path = os.path.join(folder_path, file_name)
-
-            # Async register in MongoDB
+            # Store model in DB using our single event loop
             loop.run_until_complete(store_model(symbol, file_path))
             print(f"Registered local model for {symbol} -> {file_path}")
 
-# Flask Routes
+
+
 @app.route('/available-models')
 def available_models():
-    """Return a list of available models from the database"""
-    models = loop.run_until_complete(get_all_models())  # Use existing event loop
+    """Return a list of available models from the database."""
+    models = loop.run_until_complete(get_all_models())
     return jsonify({'models': models})
 
-# Helper Functions
+
 def allowed_file(filename):
     """Check if file has allowed extension"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -231,70 +229,58 @@ def allowed_file(filename):
     """Check if file has allowed extension"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+
 @app.route('/predict', methods=['POST'])
 def predict():
-    """Handle stock prediction requests"""
+    """Handle stock prediction requests."""
     try:
-        # Get stock symbol from request
-        symbol = request.form.get('symbol')
+        symbol = request.form.get('symbol', '').upper()
         if not symbol:
             return jsonify({'error': 'No stock symbol provided'}), 400
 
-        symbol = symbol.upper()
-
-        # Fetch model path from the database instead of assuming it's in 'models/'
-        loop = asyncio.get_running_loop()
+        # Fetch model path from the DB
         model_path = loop.run_until_complete(get_latest_model(symbol))
-
-        # If no model exists, return error
         if not model_path or not os.path.exists(model_path):
             return jsonify({'error': f'No trained model found for {symbol}. Please upload a model first.'}), 404
-
-        # Fetch latest data for this symbol
+        
+        # Fetch latest data
         try:
             stock_data = get_alpha_vantage_data(symbol, API_KEY)
             data_path = os.path.join(app.config['DATA_FOLDER'], f'{symbol}_data.csv')
             stock_data.to_csv(data_path)
         except Exception as e:
             return jsonify({'error': f'Error fetching data for {symbol}: {str(e)}'}), 500
-
+        
         # Load the model
         model = load_model(model_path)
 
         # Prepare data for prediction
-        try:
-            sequence, scaler = prepare_latest_data(stock_data)
-        except ValueError as e:
-            return jsonify({'error': str(e)}), 400
+        sequence, scaler = prepare_latest_data(stock_data)
 
-        # Get current price and last date
         current_price = stock_data['close'].iloc[-1]
         last_date = stock_data['date'].iloc[-1]
 
-        # Get the number of days to predict from the form data, default to 10 if not provided
+        # Days to predict
         days_ahead_param = request.form.get('days_ahead', '10')
         try:
             days_ahead = int(days_ahead_param)
             if days_ahead <= 0:
-                raise ValueError("days_ahead must be a positive integer")
+                raise ValueError("days_ahead must be positive")
         except ValueError:
-            return jsonify({'error': 'Invalid value for days_ahead. Please provide a positive integer.'}), 400
+            return jsonify({'error': 'Invalid days_ahead. Must be a positive integer.'}), 400
 
-        # Make predictions
-        predictions = predict_future_prices(model, sequence, scaler, days_ahead)
+        # Predictions
+        future_prices = predict_future_prices(model, sequence, scaler, days_ahead)
+        decisions = make_trading_decisions(future_prices, current_price)
 
-        # Get trading decisions
-        results = make_trading_decisions(predictions, current_price)
+        # Create the plot
+        plot_data = create_prediction_plot(stock_data, decisions, symbol)
 
-        # Create plot (uses the number of prediction days based on results length)
-        plot_data = create_prediction_plot(stock_data, results, symbol)
-
-        # Return results
         return jsonify({
             'symbol': symbol,
             'current_date': last_date.strftime('%Y-%m-%d'),
             'current_price': float(current_price),
-            'predictions': results,
+            'predictions': decisions,
             'plot': plot_data
         })
 
@@ -303,34 +289,30 @@ def predict():
 
 @app.route('/upload', methods=['POST'])
 def upload_model():
-    """Handle model upload"""
+    """Handle model upload."""
     if 'model' not in request.files:
         return jsonify({'error': 'No file part'}), 400
 
     file = request.files['model']
-    symbol = request.form.get('symbol')
+    symbol = request.form.get('symbol', '').upper()
 
-    if file.filename == '':
+    if not file.filename:
         return jsonify({'error': 'No selected file'}), 400
-
     if not symbol:
         return jsonify({'error': 'No stock symbol provided'}), 400
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'Invalid file type. Only .h5 or .pkl allowed.'}), 400
 
-    symbol = symbol.upper()
+    # Save the file
+    extension = file.filename.rsplit('.', 1)[1].lower()
+    filename = f'{symbol}.{extension}'
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(file_path)
 
-    if file and allowed_file(file.filename):
-        filename = f'{symbol}.h5'  # Store without `_lstm_model` suffix
-        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(file_path)
+    # Store in DB with our single global loop
+    loop.run_until_complete(store_model(symbol, file_path))
 
-        # Store model path in database
-        asyncio.run(store_model(symbol, file_path))
-
-        return jsonify({'success': f'Model uploaded and stored in DB for {symbol}'}), 200
-    else:
-        return jsonify({'error': 'Invalid file type. Only .h5 files are allowed.'}), 400
-
-
+    return jsonify({'success': f'Model uploaded and stored for {symbol}'}), 200
 
 # Run the application
 if __name__ == '__main__':
