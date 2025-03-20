@@ -50,7 +50,7 @@ def register_local_models():
     On startup, scan backend/models/ for any .h5 or .pkl files
     and register them in MongoDB so they're known to the app.
     """
-    folder_path = os.path.join('backend', 'models')
+    folder_path = os.path.join(os.path.dirname(__file__), 'models')
     if not os.path.exists(folder_path):
         print(f"Model folder not found at {folder_path}, skipping auto-register.")
         return
