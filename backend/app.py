@@ -30,7 +30,7 @@ UPLOAD_FOLDER = 'uploads'
 MODEL_FOLDER = 'models'
 DATA_FOLDER = 'data'
 ALLOWED_EXTENSIONS = {'h5','pkl'}
-API_KEY = 'TKZMZK2F3VMKJ58C'  # Replace with your Alpha Vantage API key
+API_KEY = 'EWBKLQ2PFVIHEI87'  # Replace with your Alpha Vantage API key
 
 # Create necessary directories
 for folder in [UPLOAD_FOLDER, MODEL_FOLDER, DATA_FOLDER]:
@@ -228,35 +228,55 @@ def home():
 def allowed_file(filename):
     """Check if file has allowed extension"""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+import pickle
+import xgboost as xgb
+import torch  # For PyTorch models
+import pickle
+import xgboost as xgb
 
 
 @app.route('/predict', methods=['POST'])
 def predict():
-    """Handle stock prediction requests."""
+    """Handle stock prediction requests using any selected model for AAPL stock."""
     try:
-        symbol = request.form.get('symbol', '').upper()
-        if not symbol:
-            return jsonify({'error': 'No stock symbol provided'}), 400
+        # Get the selected model name
+        model_name = request.form.get('symbol', '').upper()
+        if not model_name:
+            return jsonify({'error': 'No model selected'}), 400
 
-        # Fetch model path from the DB
-        model_path = loop.run_until_complete(get_latest_model(symbol))
+        # Get model path from DB
+        model_path = loop.run_until_complete(get_latest_model(model_name))
         if not model_path or not os.path.exists(model_path):
-            return jsonify({'error': f'No trained model found for {symbol}. Please upload a model first.'}), 404
-        
-        # Fetch latest data
+            return jsonify({'error': f'No trained model found for {model_name}. Please upload a model first.'}), 404
+
+        # Always use AAPL stock data
+        real_symbol = "AAPL"
+
+        # Fetch AAPL stock data
         try:
-            stock_data = get_alpha_vantage_data(symbol, API_KEY)
-            data_path = os.path.join(app.config['DATA_FOLDER'], f'{symbol}_data.csv')
+            stock_data = get_alpha_vantage_data(real_symbol, API_KEY)
+            data_path = os.path.join(app.config['DATA_FOLDER'], f'{real_symbol}_data.csv')
             stock_data.to_csv(data_path)
         except Exception as e:
-            return jsonify({'error': f'Error fetching data for {symbol}: {str(e)}'}), 500
-        
-        # Load the model
-        model = load_model(model_path)
+            return jsonify({'error': f'Error fetching data for {real_symbol}: {str(e)}'}), 500
+
+        # 🔥 Determine model type based on file extension
+        if model_path.endswith('.h5'):
+            # Load TensorFlow/Keras model
+            model = load_model(model_path)
+        elif model_path.endswith('.pkl'):
+            # Load Scikit-learn/XGBoost/other model using pickle
+            with open(model_path, 'rb') as f:
+                model = pickle.load(f)
+
+            # Ensure XGBoost Booster models load correctly
+            if isinstance(model, xgb.Booster):
+                model = xgb.Booster(model_file=model_path)  # Load XGBoost model properly
+        else:
+            return jsonify({'error': 'Unsupported model format. Please upload a .h5 or .pkl model.'}), 400
 
         # Prepare data for prediction
         sequence, scaler = prepare_latest_data(stock_data)
-
         current_price = stock_data['close'].iloc[-1]
         last_date = stock_data['date'].iloc[-1]
 
@@ -269,15 +289,31 @@ def predict():
         except ValueError:
             return jsonify({'error': 'Invalid days_ahead. Must be a positive integer.'}), 400
 
-        # Predictions
-        future_prices = predict_future_prices(model, sequence, scaler, days_ahead)
+        # 🔥 Run prediction depending on model type
+        if model_path.endswith('.h5'):
+            # Deep learning models
+            future_prices = predict_future_prices(model, sequence, scaler, days_ahead)
+        elif model_path.endswith('.pkl'):
+            # Scikit-learn or other models (including KNN)
+            latest_features = sequence.reshape(sequence.shape[0], -1)  # Flatten for sklearn
+
+            # **Ensure correct feature shape for Scikit-learn models**
+            if hasattr(model, "n_features_in_"):
+                expected_features = model.n_features_in_
+                latest_features = latest_features[:, :expected_features]  # Trim or pad input to match expected shape
+            
+            # Make prediction
+            future_prices = model.predict(latest_features).tolist()
+
+        # Generate trading decisions
         decisions = make_trading_decisions(future_prices, current_price)
 
         # Create the plot
-        plot_data = create_prediction_plot(stock_data, decisions, symbol)
+        plot_data = create_prediction_plot(stock_data, decisions, model_name)
 
         return jsonify({
-            'symbol': symbol,
+            'model_used': model_name,
+            'symbol': real_symbol,
             'current_date': last_date.strftime('%Y-%m-%d'),
             'current_price': float(current_price),
             'predictions': decisions,
@@ -286,7 +322,7 @@ def predict():
 
     except Exception as e:
         return jsonify({'error': f'Error making prediction: {str(e)}'}), 500
-
+    
 @app.route('/upload', methods=['POST'])
 def upload_model():
     """Handle model upload."""
