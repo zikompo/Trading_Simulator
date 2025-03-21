@@ -30,7 +30,7 @@ UPLOAD_FOLDER = 'uploads'
 MODEL_FOLDER = 'models'
 DATA_FOLDER = 'data'
 ALLOWED_EXTENSIONS = {'h5','pkl'}
-API_KEY = 'EWBKLQ2PFVIHEI87'  # Replace with your Alpha Vantage API key
+API_KEY = 'WNA8JZGDCPTKBHSO'  # Replace with your Alpha Vantage API key
 
 # Create necessary directories
 for folder in [UPLOAD_FOLDER, MODEL_FOLDER, DATA_FOLDER]:
@@ -50,7 +50,7 @@ def register_local_models():
     On startup, scan backend/models/ for any .h5 or .pkl files
     and register them in MongoDB so they're known to the app.
     """
-    folder_path = os.path.join('backend', 'models')
+    folder_path = os.path.join(os.path.dirname(__file__), 'models')
     if not os.path.exists(folder_path):
         print(f"Model folder not found at {folder_path}, skipping auto-register.")
         return
@@ -233,8 +233,6 @@ import xgboost as xgb
 import torch  # For PyTorch models
 import pickle
 import xgboost as xgb
-
-
 @app.route('/predict', methods=['POST'])
 def predict():
     """Handle stock prediction requests using any selected model for AAPL stock."""
@@ -260,27 +258,20 @@ def predict():
         except Exception as e:
             return jsonify({'error': f'Error fetching data for {real_symbol}: {str(e)}'}), 500
 
-        # 🔥 Determine model type based on file extension
         if model_path.endswith('.h5'):
-            # Load TensorFlow/Keras model
             model = load_model(model_path)
+            is_keras_model = True
         elif model_path.endswith('.pkl'):
-            # Load Scikit-learn/XGBoost/other model using pickle
             with open(model_path, 'rb') as f:
                 model = pickle.load(f)
-
-            # Ensure XGBoost Booster models load correctly
-            if isinstance(model, xgb.Booster):
-                model = xgb.Booster(model_file=model_path)  # Load XGBoost model properly
+            is_keras_model = False
         else:
             return jsonify({'error': 'Unsupported model format. Please upload a .h5 or .pkl model.'}), 400
 
-        # Prepare data for prediction
         sequence, scaler = prepare_latest_data(stock_data)
         current_price = stock_data['close'].iloc[-1]
         last_date = stock_data['date'].iloc[-1]
 
-        # Days to predict
         days_ahead_param = request.form.get('days_ahead', '10')
         try:
             days_ahead = int(days_ahead_param)
@@ -289,21 +280,20 @@ def predict():
         except ValueError:
             return jsonify({'error': 'Invalid days_ahead. Must be a positive integer.'}), 400
 
-        # 🔥 Run prediction depending on model type
-        if model_path.endswith('.h5'):
-            # Deep learning models
+        if is_keras_model:
             future_prices = predict_future_prices(model, sequence, scaler, days_ahead)
-        elif model_path.endswith('.pkl'):
-            # Scikit-learn or other models (including KNN)
-            latest_features = sequence.reshape(sequence.shape[0], -1)  # Flatten for sklearn
-
-            # **Ensure correct feature shape for Scikit-learn models**
+        else:
+            latest_features = sequence.reshape(sequence.shape[0], -1)  
+            
             if hasattr(model, "n_features_in_"):
                 expected_features = model.n_features_in_
-                latest_features = latest_features[:, :expected_features]  # Trim or pad input to match expected shape
+                latest_features = latest_features[:, :expected_features] 
             
-            # Make prediction
-            future_prices = model.predict(latest_features).tolist()
+            predicted_prices_scaled = model.predict(latest_features)
+
+            dummy_array = np.zeros((len(predicted_prices_scaled), 5))  
+            dummy_array[:, 3] = predicted_prices_scaled  
+            future_prices = scaler.inverse_transform(dummy_array)[:, 3].tolist()  
 
         # Generate trading decisions
         decisions = make_trading_decisions(future_prices, current_price)
@@ -322,6 +312,7 @@ def predict():
 
     except Exception as e:
         return jsonify({'error': f'Error making prediction: {str(e)}'}), 500
+
     
 @app.route('/upload', methods=['POST'])
 def upload_model():
