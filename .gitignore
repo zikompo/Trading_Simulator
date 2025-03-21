@@ -6,3 +6,5 @@ models/q_table.npy
 *__pycache__*
 *python-version*
 *venv*
+.DS_Store
+.env

@@ -30,7 +30,7 @@ UPLOAD_FOLDER = 'uploads'
 MODEL_FOLDER = 'models'
 DATA_FOLDER = 'data'
 ALLOWED_EXTENSIONS = {'h5','pkl'}
-API_KEY = 'WNA8JZGDCPTKBHSO'  # Replace with your Alpha Vantage API key
+API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY') # Replace with your Alpha Vantage API key
 
 # Create necessary directories
 for folder in [UPLOAD_FOLDER, MODEL_FOLDER, DATA_FOLDER]:
@@ -161,6 +161,41 @@ def predict_future_prices(model, latest_sequence, scaler, days_ahead=10, feature
     
     return predictions
 
+def predict_future_prices_non_keras(model, latest_sequence, scaler, days_ahead=10, features_count=5):
+    """
+    Predict future prices for non-Keras models (like sklearn or XGBoost) using recursive prediction.
+    """
+    predictions = []
+    current_sequence = latest_sequence.copy()
+
+    for _ in range(days_ahead):
+        # Flatten the current sequence to feed into the model
+        features = current_sequence.reshape(current_sequence.shape[0], -1)
+
+        # Handle models with a specific number of expected features
+        if hasattr(model, "n_features_in_"):
+            expected_features = model.n_features_in_
+            features = features[:, :expected_features]
+
+        # Predict scaled close price
+        next_scaled_close = model.predict(features)[0]
+
+        # Convert to actual price using inverse transform
+        dummy = np.zeros((1, features_count))
+        dummy[0, 3] = next_scaled_close  # Only the 'close' index is set
+        next_price = scaler.inverse_transform(dummy)[0, 3]
+        predictions.append(next_price)
+
+        # Update the sequence by shifting left and appending a new day
+        new_day = current_sequence[0, -1, :].copy()
+        new_day[3] = next_scaled_close  # Update only the 'close' value
+
+        new_day = new_day.reshape(1, 1, features_count)
+        current_sequence = np.append(current_sequence[:, 1:, :], new_day, axis=1)
+
+    return predictions
+
+
 def make_trading_decisions(predictions, current_price, threshold=0.01):
     """Make trading decisions based on predictions"""
     results = []
@@ -283,17 +318,7 @@ def predict():
         if is_keras_model:
             future_prices = predict_future_prices(model, sequence, scaler, days_ahead)
         else:
-            latest_features = sequence.reshape(sequence.shape[0], -1)  
-            
-            if hasattr(model, "n_features_in_"):
-                expected_features = model.n_features_in_
-                latest_features = latest_features[:, :expected_features] 
-            
-            predicted_prices_scaled = model.predict(latest_features)
-
-            dummy_array = np.zeros((len(predicted_prices_scaled), 5))  
-            dummy_array[:, 3] = predicted_prices_scaled  
-            future_prices = scaler.inverse_transform(dummy_array)[:, 3].tolist()  
+            future_prices = predict_future_prices_non_keras(model, sequence, scaler, days_ahead)
 
         # Generate trading decisions
         decisions = make_trading_decisions(future_prices, current_price)
