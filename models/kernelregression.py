@@ -11,7 +11,8 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import TimeSeriesSplit, GridSearchCV
 
 # Your existing preprocessing function
-from preprocessing import prepare_data_kernel_regression  
+from preprocessing import prepare_data_kernel_regression_all
+
 
 ###############################################
 # 1. HELPER: Train with optional hyperparameter tuning
@@ -164,51 +165,38 @@ def plot_results(actual, predictions, target_symbol):
 def main():
     # 1) Load CSV & fix column names
     df = pd.read_csv('data/updated_data.csv')
-    df.columns = df.columns.str.strip() 
+    df.columns = df.columns.str.strip()
     df['date'] = pd.to_datetime(df['Date'])
 
     sequence_length = 60
-    symbols = df['Symbol'].unique()
 
-    for symbol in symbols:
-        print(f"\n====== Processing {symbol} ======")
-        try:
-            # 2) Prepare data
-            X_train, X_test, y_train, y_test, scaler = prepare_data_kernel_regression(
-                df, symbol, sequence_length=sequence_length
-            )
-            
-            # 3) Train with hyperparam search
-            model = train_kernel_regression_with_search(X_train, y_train)
+    try:
+        # 2) Prepare generalized dataset from all symbols
+        X_train, X_test, y_train, y_test, scaler = prepare_data_kernel_regression_all(
+            df, sequence_length=sequence_length
+        )
 
-            # 4) Evaluate
-            predictions, actual = evaluate_model(
-                model, X_test, y_test, scaler, features_shape=5
-            )
+        # 3) Train one model using all stocks' sequences
+        model = train_kernel_regression_with_search(X_train, y_train)
 
-            # 5) Plot
-            plot_results(actual, predictions, symbol)
+        # 4) Evaluate
+        predictions, actual = evaluate_model(
+            model, X_test, y_test, scaler, features_shape=5
+        )
 
-            # 6) Trading decision
-            features = ['Open', 'High', 'Low', 'Close', 'Volume']
-            target_df = df[df['Symbol'] == symbol].sort_values('Date')
-            recent_data = target_df[features].values[-sequence_length:]
-            recent_data_scaled = scaler.transform(recent_data).reshape(1, sequence_length, 5)
+        # 5) Plot results
+        plot_results(actual, predictions, target_symbol="GENERALIZED")
 
-            decision, next_price, current_price = make_trading_decision(
-                model, recent_data_scaled, scaler, features_shape=5
-            )
-            print(f"Current price: {current_price:.2f}")
-            print(f"Predicted next day's close: {next_price:.2f}")
-            print(f"Trading decision: {decision.upper()}")
+        # 6) Save the model
+        os.makedirs("backend/models", exist_ok=True)
+        with open("backend/models/general_kernel_model.pkl", "wb") as f:
+            pickle.dump(model, f)
 
-            # 7) Save model
-            os.makedirs("backend/models", exist_ok=True)
-            with open(f"backend/models/{symbol}_kernel_regression_model.pkl", "wb") as f:
-                pickle.dump(model, f)
+        print("\n✅ Model trained and saved successfully.")
 
-        except Exception as e:
-            print(f"Error processing {symbol}: {e}")
+    except Exception as e:
+        print(f"\n Error during training: {e}")
+
 
 if __name__ == "__main__":
     main()

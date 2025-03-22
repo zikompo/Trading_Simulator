@@ -9,27 +9,34 @@ def load_data(path):
     df['date'] = pd.to_datetime(df['date'])
     return df
 
-def prepare_data_kernel_regression(df, target_symbol, sequence_length=60):
+def prepare_data_kernel_regression_all(df, sequence_length=60):
     """
-    Prepare time-series data for kernel regression.
+    Combines sequences from all stocks. Keeps time order.
+    Uses only Open, High, Low, Close, Volume.
     """
-    target_df = df[df['Symbol'] == target_symbol].sort_values('Date')
-
     features = ['Open', 'High', 'Low', 'Close', 'Volume']
-    data = target_df[features].values
+    all_X, all_y = [], []
 
+    # Fit one scaler globally (optional: you could also scale per stock if needed)
     scaler = MinMaxScaler()
-    scaled_data = scaler.fit_transform(data)
+    df[features] = scaler.fit_transform(df[features])
 
-    X, y = [], []
-    for i in range(len(scaled_data) - sequence_length):
-        sequence = scaled_data[i : i + sequence_length]
-        sequence_flat = sequence.flatten()
-        X.append(sequence_flat)
-        y.append(scaled_data[i + sequence_length, 3])  # next day's close
+    for symbol in df['Symbol'].unique():
+        target_df = df[df['Symbol'] == symbol].sort_values('Date')
+        data = target_df[features].values
 
-    X = np.array(X)
-    y = np.array(y)
+        for i in range(len(data) - sequence_length):
+            sequence = data[i:i + sequence_length]
+            target_close = data[i + sequence_length, 3]  # next day's close
+            all_X.append(sequence.flatten())
+            all_y.append(target_close)
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+    X = np.array(all_X)
+    y = np.array(all_y)
+
+    # Split by time: no shuffle
+    split_idx = int(len(X) * 0.8)
+    X_train, X_test = X[:split_idx], X[split_idx:]
+    y_train, y_test = y[:split_idx], y[split_idx:]
+
     return X_train, X_test, y_train, y_test, scaler
