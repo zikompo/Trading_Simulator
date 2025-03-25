@@ -3,9 +3,10 @@ import axios from 'axios';
 import './App.css';
 
 function App() {
-  const [symbol, setSymbol] = useState('');
-  const [daysAhead, setDaysAhead] = useState(10); // New state for custom days ahead
-  const [modelSymbol, setModelSymbol] = useState('');
+  // Use separate states: stockSymbol for the ticker and selectedModel for the chosen model.
+  const [stockSymbol, setStockSymbol] = useState('');
+  const [daysAhead, setDaysAhead] = useState(10);
+  const [selectedModel, setSelectedModel] = useState('');
   const [modelFile, setModelFile] = useState(null);
   const [loading, setLoading] = useState(false);
   const [predictionResult, setPredictionResult] = useState(null);
@@ -26,8 +27,13 @@ function App() {
 
   const handlePredictSubmit = async (e) => {
     e.preventDefault();
-    if (!symbol) {
+    // Require a stock symbol and a selected model.
+    if (!stockSymbol) {
       alert('Please enter a stock symbol');
+      return;
+    }
+    if (!selectedModel) {
+      alert('Please select a model from the library');
       return;
     }
     setLoading(true);
@@ -35,11 +41,13 @@ function App() {
   
     try {
       const formData = new URLSearchParams();
-      formData.append('symbol', symbol.toUpperCase());
-      // Append the custom days ahead value
+      // 'symbol' holds the model name for lookup on the server.
+      formData.append('symbol', selectedModel.toUpperCase());
+      // 'stock' holds the ticker for which to fetch data.
+      formData.append('stock', stockSymbol.toUpperCase());
       formData.append('days_ahead', daysAhead);
 
-      const res = await axios.post('/predict', formData, {
+      const res = await axios.post('/predict_lstm', formData, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
       setPredictionResult(res.data);
@@ -53,12 +61,12 @@ function App() {
 
   const handleUploadSubmit = async (e) => {
     e.preventDefault();
-    if (!modelSymbol || !modelFile) {
-      alert('Please enter a stock symbol and select a model file');
+    if (!selectedModel || !modelFile) {
+      alert('Please enter a model symbol and choose a model file');
       return;
     }
     const formData = new FormData();
-    formData.append('symbol', modelSymbol.toUpperCase());
+    formData.append('symbol', selectedModel.toUpperCase());
     formData.append('model', modelFile);
 
     try {
@@ -66,7 +74,7 @@ function App() {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       alert('Model uploaded successfully!');
-      setModelSymbol('');
+      setSelectedModel('');
       setModelFile(null);
       loadAvailableModels();
     } catch (error) {
@@ -102,18 +110,17 @@ function App() {
             <h2>Predict Stock</h2>
             <form id="predictForm" onSubmit={handlePredictSubmit}>
               <div className="input-group">
-                <label htmlFor="symbol">Stock Symbol</label>
+                <label htmlFor="stockSymbol">Stock Symbol</label>
                 <input
                   type="text"
-                  id="symbol"
+                  id="stockSymbol"
                   placeholder="e.g., AAPL"
-                  value={symbol}
-                  onChange={(e) => setSymbol(e.target.value)}
+                  value={stockSymbol}
+                  onChange={(e) => setStockSymbol(e.target.value)}
                   required
                 />
                 <small>Enter stock ticker symbol (AAPL, MSFT, etc.)</small>
               </div>
-              {/* New input for custom prediction days */}
               <div className="input-group">
                 <label htmlFor="daysAhead">Days Ahead</label>
                 <input
@@ -146,13 +153,9 @@ function App() {
                   {availableModels.map((m) => (
                     <button
                       key={m}
-                      className="model-chip"
-                      onClick={() => {
-                        setSymbol(m);
-                        setTimeout(() => document.getElementById('predictForm')?.dispatchEvent(
-                          new Event('submit', { cancelable: true, bubbles: true })
-                        ), 0);
-                      }}
+                      className={`model-chip ${selectedModel === m ? "selected" : ""}`}
+                      // Clicking a chip now only updates selectedModel
+                      onClick={() => setSelectedModel(m)}
                     >
                       {m}
                     </button>
@@ -168,13 +171,13 @@ function App() {
             <h2>Upload New Model</h2>
             <form onSubmit={handleUploadSubmit}>
               <div className="input-group">
-                <label htmlFor="modelSymbol">Stock Symbol</label>
+                <label htmlFor="selectedModelUpload">Stock Symbol (for model)</label>
                 <input
                   type="text"
-                  id="modelSymbol"
+                  id="selectedModelUpload"
                   placeholder="e.g., AAPL"
-                  value={modelSymbol}
-                  onChange={(e) => setModelSymbol(e.target.value)}
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
                   required
                 />
               </div>
@@ -204,7 +207,7 @@ function App() {
             <div className="placeholder-message">
               <div className="placeholder-icon">📈</div>
               <h2>Select a stock to view predictions</h2>
-              <p>Enter a stock symbol or choose from available models</p>
+              <p>Enter a stock symbol and select a model</p>
             </div>
           )}
 

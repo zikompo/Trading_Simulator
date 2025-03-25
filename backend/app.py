@@ -1,38 +1,33 @@
-# app.py - Flask application for stock prediction
 import os
-from database import get_latest_model, store_model
+import io
+import time
+import base64
 import asyncio
-import requests
+import nest_asyncio
 import pandas as pd
 import numpy as np
-import json
-from database import get_latest_model, store_model, get_all_models
-from datetime import datetime
-import time
 import matplotlib
-matplotlib.use('Agg')  # Set the backend for matplotlib to avoid GUI issues
+matplotlib.use('Agg')  # Use non-GUI backend for matplotlib
 import matplotlib.pyplot as plt
-from pandas.tseries.offsets import BDay
-from sklearn.preprocessing import MinMaxScaler
+import yfinance as yf
+from flask import Flask, request, render_template, jsonify
 from tensorflow.keras.models import load_model
-from flask import Flask, request, render_template, jsonify, send_file
-import io
-import base64
-from werkzeug.utils import secure_filename
-import nest_asyncio
+from sklearn.preprocessing import MinMaxScaler
+import pickle
 
+# Apply nest_asyncio to support async operations if needed
+nest_asyncio.apply()
+loop = asyncio.get_event_loop()
 
-# Initialize Flask app
+# ---------------------------
+# Flask App Configuration
+# ---------------------------
 app = Flask(__name__)
-
-# Configuration
 UPLOAD_FOLDER = 'uploads'
 MODEL_FOLDER = 'models'
 DATA_FOLDER = 'data'
-ALLOWED_EXTENSIONS = {'h5','pkl'}
-API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY') # Replace with your Alpha Vantage API key
+ALLOWED_EXTENSIONS = {'h5', 'pkl'}
 
-# Create necessary directories
 for folder in [UPLOAD_FOLDER, MODEL_FOLDER, DATA_FOLDER]:
     os.makedirs(folder, exist_ok=True)
 
@@ -40,203 +35,120 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MODEL_FOLDER'] = MODEL_FOLDER
 app.config['DATA_FOLDER'] = DATA_FOLDER
 
-nest_asyncio.apply()
-loop = asyncio.get_event_loop()
-
-nest_asyncio.apply()
-loop = asyncio.get_event_loop()
-def register_local_models():
-    """
-    On startup, scan backend/models/ for any .h5 or .pkl files
-    and register them in MongoDB so they're known to the app.
-    """
-    folder_path = os.path.join(os.path.dirname(__file__), 'models')
-    if not os.path.exists(folder_path):
-        print(f"Model folder not found at {folder_path}, skipping auto-register.")
-        return
-    
-    for file_name in os.listdir(folder_path):
-        if file_name.endswith('.h5') or file_name.endswith('.pkl'):
-            symbol = file_name.rsplit('.', 1)[0].upper()
-            file_path = os.path.join(folder_path, file_name)
-            # Store model in DB using our single event loop
-            loop.run_until_complete(store_model(symbol, file_path))
-            print(f"Registered local model for {symbol} -> {file_path}")
-
-
-
-@app.route('/available-models')
-def available_models():
-    """Return a list of available models from the database."""
-    models = loop.run_until_complete(get_all_models())
-    return jsonify({'models': models})
-
-
+# ---------------------------
+# Helper Functions
+# ---------------------------
 def allowed_file(filename):
-    """Check if file has allowed extension"""
+    """Check if file has an allowed extension."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-def get_alpha_vantage_data(symbol, api_key, function='TIME_SERIES_DAILY', output_size='compact'):
-    """Fetch stock data from Alpha Vantage API"""
-    base_url = 'https://www.alphavantage.co/query'
-    params = {
-        'function': function,
-        'symbol': symbol,
-        'apikey': api_key,
-        'outputsize': output_size
-    }
+def get_local_model_path(symbol):
+    """
+    Search the local model folder for a file named <symbol>.h5 or <symbol>.pkl.
+    Returns the path if found, else None.
+    """
+    folder = app.config['MODEL_FOLDER']
+    for ext in ALLOWED_EXTENSIONS:
+        model_file = os.path.join(folder, f"{symbol}.{ext}")
+        if os.path.exists(model_file):
+            return model_file
+    return None
+
+def get_yfinance_data(symbol, start_date="2022-03-19", end_date=None):
+    """
+    Fetch stock data using yfinance.
+    Downloads data from start_date to today (or specified end_date),
+    resets the index, and sorts the data by date.
+    """
+
+    if end_date is None:
+        end_date = pd.Timestamp.today().strftime('%Y-%m-%d')
     
-    response = requests.get(base_url, params=params)
-    data = response.json()
+    df = yf.download(symbol, start=start_date, end=end_date, progress=False, auto_adjust=True)
+    print("Before flattening:", df.columns)
+    if isinstance(df.columns, pd.MultiIndex):
+        # Use the 'Price' level (or level 0) instead of the last level
+        df.columns = df.columns.get_level_values('Price')
+        # Optionally, remove the column name
+        df.columns.name = None
+    print("After flattening:", df.columns)
+
+    if df.empty:
+        raise ValueError(f"No data found for {symbol}")
     
-    # Check for error messages
-    if "Error Message" in data:
-        raise ValueError(f"API Error: {data['Error Message']}")
-    
-    # Extract time series data
-    if function == 'TIME_SERIES_DAILY':
-        time_series_key = 'Time Series (Daily)'
-    elif function == 'TIME_SERIES_WEEKLY':
-        time_series_key = 'Weekly Time Series'
-    else:
-        time_series_key = 'Time Series (Daily)'  # Default
-    
-    # Convert to DataFrame
-    df = pd.DataFrame(data[time_series_key]).T
-    
-    # Convert string values to float
-    for col in df.columns:
-        df[col] = pd.to_numeric(df[col])
-    
-    # Rename columns
-    df.columns = ['open', 'high', 'low', 'close', 'volume']
-    
-    # Add date as a column
-    df.index = pd.to_datetime(df.index)
-    df['date'] = df.index
-    
-    # Sort by date
-    df = df.sort_values('date')
-    
+    df = df.reset_index()
+    df['Date'] = pd.to_datetime(df['Date'])
+    df['Symbol'] = symbol
+    df = df.sort_values('Date')
     return df
 
 def prepare_latest_data(df, sequence_length=60):
-    """Prepare the latest data sequence for prediction"""
-    features = ['open', 'high', 'low', 'close', 'volume']
+    """Prepare the latest data sequence for prediction."""
+    features = ['Open', 'High', 'Low', 'Close', 'Volume']
     data = df[features].values
-    
     scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data)
+    scaler.fit(data)
     
-    # Get the latest sequence
-    if len(scaled_data) < sequence_length:
+    if len(data) < sequence_length:
         raise ValueError(f"Not enough data. Need at least {sequence_length} days.")
         
-    latest_sequence = scaled_data[-sequence_length:].reshape(1, sequence_length, len(features))
-    
-    return latest_sequence, scaler
+    latest_sequence = data[-sequence_length:]
+    latest_sequence_scaled = scaler.transform(latest_sequence).reshape(1, sequence_length, len(features))
+    return latest_sequence_scaled, scaler
 
 def predict_future_prices(model, latest_sequence, scaler, days_ahead=10, features_count=5):
-    """Predict future prices for multiple days ahead"""
+    """
+    Predict future prices for multiple days ahead using the Keras LSTM model.
+    Returns a list of predicted prices.
+    """
     predictions = []
     current_sequence = latest_sequence.copy()
     
     for _ in range(days_ahead):
-        # Predict the next day
-        next_pred = model.predict(current_sequence, verbose=0)[0, 0]
-        
-        # Store the prediction
+        next_pred = float(model.predict(current_sequence, verbose=0)[0, 0])
         dummy = np.zeros((1, features_count))
-        dummy[0, 3] = next_pred  # 3 is the index for 'close'
-        next_price = scaler.inverse_transform(dummy)[0, 3]
+        dummy[0, 3] = next_pred  # index 3 corresponds to 'Close'
+        next_price = float(scaler.inverse_transform(dummy)[0, 3])
         predictions.append(next_price)
         
-        # Update the sequence for the next prediction
+        # Update sequence: remove the first day and append new prediction as the last day.
         new_pred = np.zeros((1, 1, features_count))
-        new_pred[0, 0, :] = current_sequence[0, -1, :]  # Copy the last day's values
-        new_pred[0, 0, 3] = next_pred  # Update only the close price
-        
-        # Remove the first day and add the new prediction
+        new_pred[0, 0, :] = current_sequence[0, -1, :].copy()
+        new_pred[0, 0, 3] = next_pred  # update close price with prediction
         current_sequence = np.append(current_sequence[:, 1:, :], new_pred, axis=1)
     
     return predictions
 
-def predict_future_prices_non_keras(model, latest_sequence, scaler, days_ahead=10, features_count=5):
-    """
-    Predict future prices for non-Keras models (like sklearn or XGBoost) using recursive prediction.
-    """
-    predictions = []
-    current_sequence = latest_sequence.copy()
-
-    for _ in range(days_ahead):
-        # Flatten the current sequence to feed into the model
-        features = current_sequence.reshape(current_sequence.shape[0], -1)
-
-        # Handle models with a specific number of expected features
-        if hasattr(model, "n_features_in_"):
-            expected_features = model.n_features_in_
-            features = features[:, :expected_features]
-
-        # Predict scaled close price
-        next_scaled_close = model.predict(features)[0]
-
-        # Convert to actual price using inverse transform
-        dummy = np.zeros((1, features_count))
-        dummy[0, 3] = next_scaled_close  # Only the 'close' index is set
-        next_price = scaler.inverse_transform(dummy)[0, 3]
-        predictions.append(next_price)
-
-        # Update the sequence by shifting left and appending a new day
-        new_day = current_sequence[0, -1, :].copy()
-        new_day[3] = next_scaled_close  # Update only the 'close' value
-
-        new_day = new_day.reshape(1, 1, features_count)
-        current_sequence = np.append(current_sequence[:, 1:, :], new_day, axis=1)
-
-    return predictions
-
-
 def make_trading_decisions(predictions, current_price, threshold=0.01):
-    """Make trading decisions based on predictions"""
+    """Generate trading signals based on predicted prices."""
     results = []
     prev_price = current_price
-    
     for i, next_price in enumerate(predictions):
         expected_return = (next_price - prev_price) / prev_price
-        
-        if expected_return > threshold:
-            decision = 'BUY'
-        elif expected_return < -threshold:
-            decision = 'SELL'
-        else:
-            decision = 'HOLD'
-        
+        decision = 'BUY' if expected_return > threshold else 'SELL' if expected_return < -threshold else 'HOLD'
         results.append({
             'day': i + 1,
             'predicted_price': float(next_price),
-            'expected_return': float(expected_return * 100),  # Convert to percentage
+            'expected_return': float(expected_return * 100),
             'decision': decision
         })
-        
         prev_price = next_price
-    
     return results
 
-def create_prediction_plot(historical_data, predictions, symbol):
-    """Create a plot of historical and predicted prices"""
-    # Get the last date from historical data
-    last_date = historical_data['date'].iloc[-1]
-    
-    # Create date range for predictions
-    future_dates = [last_date + BDay(i+1) for i in range(len(predictions))]
-    predicted_prices = [p['predicted_price'] for p in predictions]
-    
-    # Get last 30 days of historical data for plotting
-    last_30_days = historical_data.iloc[-30:]
+def create_prediction_plot(historical_data, decisions, symbol):
+    """
+    Create a plot showing historical prices (last 30 days) and the predicted future prices.
+    Returns the plot as a base64 encoded string.
+    """
+    last_date = historical_data['Date'].iloc[-1]
+    from pandas.tseries.offsets import BDay
+    future_dates = [last_date + BDay(i+1) for i in range(len(decisions))]
+    predicted_prices = [d['predicted_price'] for d in decisions]
+    historical_plot = historical_data.iloc[-30:]
     
     plt.figure(figsize=(10, 6))
-    plt.plot(last_30_days['date'], last_30_days['close'], color='blue', label='Historical Prices')
-    plt.plot(future_dates, predicted_prices, color='red', label='Predicted Prices', linestyle='--')
+    plt.plot(historical_plot['Date'], historical_plot['Close'], color='blue', marker='o', label='Historical Prices')
+    plt.plot(future_dates, predicted_prices, color='red', linestyle='--', marker='o', label='Predicted Prices')
     plt.axvline(x=last_date, color='green', linestyle='-', label='Current Date')
     plt.title(f'{symbol} Price Prediction')
     plt.xlabel('Date')
@@ -244,70 +156,85 @@ def create_prediction_plot(historical_data, predictions, symbol):
     plt.legend()
     plt.grid(True)
     
-    # Save plot to a bytes buffer
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
     plt.close()
-    
-    # Convert to base64 for embedding in HTML
-    plot_data = base64.b64encode(buf.getvalue()).decode('utf-8')
-    return plot_data
+    plot_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+    return plot_base64
 
-# Flask Routes
+# ---------------------------
+# Flask Endpoints
+# ---------------------------
 @app.route('/')
 def home():
-    """Render the home page"""
-    return render_template('index.html')
+    return render_template('index.html')  # Ensure you have an index.html in your templates folder
 
-def allowed_file(filename):
-    """Check if file has allowed extension"""
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-import pickle
-import xgboost as xgb
-import torch  # For PyTorch models
-import pickle
-import xgboost as xgb
-@app.route('/predict', methods=['POST'])
-def predict():
-    """Handle stock prediction requests using any selected model for AAPL stock."""
+@app.route('/available-models')
+def available_models():
+    """Return a list of available model symbols from the local model folder."""
+    models = []
+    folder = app.config['MODEL_FOLDER']
+    for file in os.listdir(folder):
+        if file.endswith('.h5') or file.endswith('.pkl'):
+            symbol = file.rsplit('.', 1)[0].upper()
+            models.append(symbol)
+    return jsonify({'models': models})
+
+@app.route('/upload', methods=['POST'])
+def upload_model():
+    """Handle model upload and save it locally."""
+    if 'model' not in request.files:
+        return jsonify({'error': 'No file part'}), 400
+
+    file = request.files['model']
+    raw_symbol = request.form.get('symbol', '')
+    # Force raw_symbol to a plain string
+    model_symbol = str(raw_symbol).split()[0].strip().upper()
+    
+    if not file.filename:
+        return jsonify({'error': 'No selected file'}), 400
+    if model_symbol == "":
+        return jsonify({'error': 'No stock symbol provided'}), 400
+    if not allowed_file(file.filename):
+        return jsonify({'error': 'Invalid file type. Only .h5 or .pkl allowed.'}), 400
+
+    extension = file.filename.rsplit('.', 1)[1].lower()
+    filename = f'{model_symbol}.{extension}'
+    model_path = os.path.join(app.config['MODEL_FOLDER'], filename)
+    file.save(model_path)
+
+    return jsonify({'success': f'Model uploaded and stored for {model_symbol}'}), 200
+
+@app.route('/predict_lstm', methods=['POST'])
+def predict_lstm():
+    """
+    LSTM prediction route.
+    Expects form fields:
+      - 'symbol': the model symbol (used to locate the model file)
+      - 'stock': the stock ticker for which to fetch data
+      - 'days_ahead': number of days to predict (integer)
+    """
     try:
-        # Get the selected model name
-        model_name = request.form.get('symbol', '').upper()
-        if not model_name:
-            return jsonify({'error': 'No model selected'}), 400
-
-        # Get model path from DB
-        model_path = loop.run_until_complete(get_latest_model(model_name))
-        if not model_path or not os.path.exists(model_path):
-            return jsonify({'error': f'No trained model found for {model_name}. Please upload a model first.'}), 404
-
-        # Always use AAPL stock data
-        real_symbol = "AAPL"
-
-        # Fetch AAPL stock data
-        try:
-            stock_data = get_alpha_vantage_data(real_symbol, API_KEY)
-            data_path = os.path.join(app.config['DATA_FOLDER'], f'{real_symbol}_data.csv')
-            stock_data.to_csv(data_path)
-        except Exception as e:
-            return jsonify({'error': f'Error fetching data for {real_symbol}: {str(e)}'}), 500
-
-        if model_path.endswith('.h5'):
-            model = load_model(model_path)
-            is_keras_model = True
-        elif model_path.endswith('.pkl'):
-            with open(model_path, 'rb') as f:
-                model = pickle.load(f)
-            is_keras_model = False
+        # Directly convert the form values to plain strings.
+        model_symbol = str(request.form.get('symbol', '')).strip().upper()
+        stock_field = str(request.form.get('stock', '')).strip().upper()
+        days_ahead_param = str(request.form.get('days_ahead', '10')).strip()
+        
+        # Debug prints (you can remove these later)
+        print("Model Symbol:", model_symbol, type(model_symbol))
+        print("Stock Field:", stock_field, type(stock_field))
+        print("Days Ahead Param:", days_ahead_param, type(days_ahead_param))
+        
+        if model_symbol == "":
+            return jsonify({'error': 'No model symbol provided'}), 400
+        
+        # If the stock ticker is not provided or equals the model symbol, default to "AAPL"
+        if stock_field == "" or stock_field == model_symbol:
+            stock_symbol = "AAPL"
         else:
-            return jsonify({'error': 'Unsupported model format. Please upload a .h5 or .pkl model.'}), 400
+            stock_symbol = stock_field
 
-        sequence, scaler = prepare_latest_data(stock_data)
-        current_price = stock_data['close'].iloc[-1]
-        last_date = stock_data['date'].iloc[-1]
-
-        days_ahead_param = request.form.get('days_ahead', '10')
         try:
             days_ahead = int(days_ahead_param)
             if days_ahead <= 0:
@@ -315,58 +242,47 @@ def predict():
         except ValueError:
             return jsonify({'error': 'Invalid days_ahead. Must be a positive integer.'}), 400
 
-        if is_keras_model:
-            future_prices = predict_future_prices(model, sequence, scaler, days_ahead)
-        else:
-            future_prices = predict_future_prices_non_keras(model, sequence, scaler, days_ahead)
+        # Locate the model file (only LSTM models in .h5 format are handled here)
+        model_path = get_local_model_path(model_symbol)
+        if model_path is None:
+            return jsonify({'error': f'No trained model found for {model_symbol}. Please upload a model first.'}), 404
+        if not model_path.endswith('.h5'):
+            return jsonify({'error': 'This endpoint only supports LSTM models in .h5 format.'}), 400
 
-        # Generate trading decisions
+        # Fetch stock data using yfinance
+        stock_data = get_yfinance_data(stock_symbol)
+        data_path = os.path.join(app.config['DATA_FOLDER'], f'{stock_symbol}_data.csv')
+        stock_data.to_csv(data_path, index=False)
+        
+        # Load the LSTM model
+        model = load_model(model_path)
+        
+        # Prepare the latest data sequence and scaler
+        latest_sequence, scaler = prepare_latest_data(stock_data)
+        current_price = stock_data['Close'].iloc[-1]
+        last_date = stock_data['Date'].iloc[-1]
+        
+        # Predict future prices using the LSTM model
+        future_prices = predict_future_prices(model, latest_sequence, scaler, days_ahead)
+        # Generate trading decisions based on predictions
         decisions = make_trading_decisions(future_prices, current_price)
-
-        # Create the plot
-        plot_data = create_prediction_plot(stock_data, decisions, model_name)
-
+        
+        # Generate a prediction plot (chart)
+        plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
+        
         return jsonify({
-            'model_used': model_name,
-            'symbol': real_symbol,
+            'model_used': model_symbol,
+            'symbol': stock_symbol,
             'current_date': last_date.strftime('%Y-%m-%d'),
             'current_price': float(current_price),
             'predictions': decisions,
-            'plot': plot_data
+            'plot': plot_img
         })
-
+        
     except Exception as e:
         return jsonify({'error': f'Error making prediction: {str(e)}'}), 500
 
-    
-@app.route('/upload', methods=['POST'])
-def upload_model():
-    """Handle model upload."""
-    if 'model' not in request.files:
-        return jsonify({'error': 'No file part'}), 400
 
-    file = request.files['model']
-    symbol = request.form.get('symbol', '').upper()
 
-    if not file.filename:
-        return jsonify({'error': 'No selected file'}), 400
-    if not symbol:
-        return jsonify({'error': 'No stock symbol provided'}), 400
-    if not allowed_file(file.filename):
-        return jsonify({'error': 'Invalid file type. Only .h5 or .pkl allowed.'}), 400
-
-    # Save the file
-    extension = file.filename.rsplit('.', 1)[1].lower()
-    filename = f'{symbol}.{extension}'
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    file.save(file_path)
-
-    # Store in DB with our single global loop
-    loop.run_until_complete(store_model(symbol, file_path))
-
-    return jsonify({'success': f'Model uploaded and stored for {symbol}'}), 200
-
-# Run the application
 if __name__ == '__main__':
-    register_local_models()
     app.run(debug=True, host='0.0.0.0', port=4080)
