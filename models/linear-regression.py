@@ -9,64 +9,41 @@ def read_csv(path):
 
 def get_data():
     """Read data from CSV, split into features and target, then into training and test sets."""
-    df = read_csv('data/data.csv')
+    df = pd.read_csv('/Users/arsencameron/Documents/Projects/Trading_Simulator/data/updated_data.csv', parse_dates=['Date'])
     print(f"Initial data shape: {df.shape}")
     
-    # Drop the 'Unnamed: 0' column if it exists
-    if 'Unnamed: 0' in df.columns:
-        df = df.drop(columns=['Unnamed: 0'])
+    # Ensure sorting by date (important for time series data)
+    df = df.sort_values(by='Date')
     
-    # Select only relevant features for stock price prediction
-    selected_features = [
-        'returns', 'high_low_ratio', 'close_open_ratio', 'volume_change',
-        'return_lag_1', 'return_lag_2', 'return_lag_3', 'return_lag_4', 'return_lag_5',
-        'return_lag_6', 'return_lag_7', 'return_lag_8', 'return_lag_9', 'return_lag_10',
-        'hl_ratio_lag_1', 'hl_ratio_lag_2', 'hl_ratio_lag_3', 'hl_ratio_lag_4', 'hl_ratio_lag_5',
-        'co_ratio_lag_1', 'co_ratio_lag_2', 'co_ratio_lag_3', 'co_ratio_lag_4', 'co_ratio_lag_5',
-        'volume_change_lag_1', 'volume_change_lag_2', 'volume_change_lag_3', 'volume_change_lag_4', 'volume_change_lag_5',
-        'return_std_5', 'return_std_10', 'return_std_20'
-    ]
+    # Generate features
+    df['returns'] = df['Close'].pct_change()
+    df['high_low_ratio'] = df['High'] / df['Low']
+    df['close_open_ratio'] = df['Close'] / df['Open']
+    df['volume_change'] = df['Volume'].pct_change()
     
-    df = df[selected_features + ['target']]  # Include target column in the dataframe
+    # Generate lag features
+    for lag in range(1, 6):
+        df[f'return_lag_{lag}'] = df['returns'].shift(lag)
+        df[f'hl_ratio_lag_{lag}'] = df['high_low_ratio'].shift(lag)
+        df[f'co_ratio_lag_{lag}'] = df['close_open_ratio'].shift(lag)
+        df[f'volume_change_lag_{lag}'] = df['volume_change'].shift(lag)
     
-    print(f"Columns after selecting features: {df.columns}")
+    # Define target variable (e.g., predicting next day's return direction)
+    df['target'] = (df['returns'].shift(-1) > 0).astype(int)
     
-    # Ensure all features are numeric and convert if necessary
-    for feature in selected_features:
-        if not pd.api.types.is_numeric_dtype(df[feature]):
-            print(f"Converting feature '{feature}' to numeric.")
-            df[feature] = pd.to_numeric(df[feature], errors='coerce')
-    
-    # Drop rows with NaN values after conversion
+    # Drop NaN values introduced by shifting
     df = df.dropna()
-    print(f"Data shape after cleaning: {df.shape}")
-
-    # Check if the dataset is empty after dropping rows
-    if df.empty:
-        print("The dataset is empty after preprocessing.")
-        return None, None, None, None
+    print(f"Data shape after feature engineering: {df.shape}")
     
-    # Separate features and target
-    X = df[selected_features]
+    # Select feature columns
+    feature_cols = [col for col in df.columns if col not in ['Date', 'Symbol', 'target']]
+    X = df[feature_cols]
     y = df['target']
-
-    # Split data into train and test sets (don't shuffle for time series data)
+    
+    # Split into training and test sets (no shuffle for time series data)
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
     print(f"Training data shape: {X_train.shape}, Test data shape: {X_test.shape}")
-    return X_train, X_test, y_train, y_test
-
     
-    # Check if the dataset is empty
-    if df.empty:
-        print("The dataset is empty after preprocessing.")
-        return None, None, None, None
-    
-    X = df[features]
-    y = df['target']
-
-    # Using shuffle=False for time series data; remove if not needed
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-    print(f"Training data shape: {X_train.shape}, Test data shape: {X_test.shape}")
     return X_train, X_test, y_train, y_test
 
 def main():
