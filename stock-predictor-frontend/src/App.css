@@ -247,6 +247,11 @@ h1, h2, h3, h4, p {
   border-color: var(--primary-color);
 }
 
+.model-chip.selected {
+  background-color: #d6d6d6; 
+  color: black;
+  border: 1px solid #b0b0b0;
+}
 /* Loading indicators */
 .loading-container {
   display: flex;
