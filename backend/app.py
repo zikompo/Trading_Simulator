@@ -16,6 +16,7 @@ from sklearn.preprocessing import MinMaxScaler
 import joblib
 from database import store_model
 from database import get_all_models  # make sure this is imported
+from qlearningagent import QLearningAgent
 
 # Apply nest_asyncio to support async operations if needed
 nest_asyncio.apply()
@@ -510,6 +511,98 @@ def predict_linear():
     except Exception as e:
         return jsonify({'error': f'Error making linear regression prediction: {str(e)}'}), 500
 
+def create_q_plot(q_values, actions):
+    import matplotlib.pyplot as plt
+    import io, base64
+    plt.figure(figsize=(6,4))
+    plt.bar(range(len(q_values)), q_values, tick_label=[actions[i] for i in range(len(actions))], color='skyblue')
+    plt.title("Q-values for Current State")
+    plt.xlabel("Actions")
+    plt.ylabel("Q-value")
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plot_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+    plt.close()
+    return plot_base64
+
+
+@app.route('/predict_qlearning', methods=['POST'])
+def predict_qlearning():
+    """
+    Q-learning prediction route.
+    Expects form fields:
+      - 'symbol': the model symbol (used to locate the model file)
+      - 'stock': the stock ticker for which to fetch data
+      - 'holding': (optional) 0 if not holding, 1 if holding (defaults to 0)
+    
+    This endpoint computes the current trend based on the last two closing prices,
+    forms the state as (trend, holding), loads the saved Q-learning agent, retrieves
+    the Q-values for that state, and returns only the recommended action.
+    """
+    try:
+        # Retrieve input parameters.
+        model_symbol = str(request.form.get('symbol', '')).strip().upper()
+        stock_field = str(request.form.get('stock', '')).strip().upper()
+        holding = request.form.get('holding', 0)
+        
+        if model_symbol == "":
+            return jsonify({'error': 'No model symbol provided'}), 400
+        
+        # Default to AAPL if no valid stock ticker is provided.
+        stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
+        holding = int(holding)
+        
+        # Fetch stock data using yfinance.
+        stock_data = get_yfinance_data(stock_symbol)
+        if stock_data.empty:
+            return jsonify({'error': f'No data found for stock symbol {stock_symbol}.'}), 404
+        
+        # Compute current trend based on the last two closing prices.
+        if len(stock_data) < 2:
+            return jsonify({'error': 'Not enough data to compute trend.'}), 400
+        current_close = stock_data['Close'].iloc[-1]
+        prev_close = stock_data['Close'].iloc[-2]
+        ret = (current_close - prev_close) / prev_close
+        threshold = 0.001
+        if ret > threshold:
+            trend = 'up'
+        elif ret < -threshold:
+            trend = 'down'
+        else:
+            trend = 'stable'
+        
+        # Form the state as a tuple (trend, holding)
+        state = (trend, holding)
+        
+        # Load the saved Q-learning agent.
+        import pickle
+        model_path = os.path.join(app.config['MODEL_FOLDER'], 'q_learning_agent.pkl')
+        if not os.path.exists(model_path):
+            return jsonify({'error': f'No Q-learning agent found at {model_path}. Please train and export the model first.'}), 404
+        with open(model_path, 'rb') as f:
+            agent = pickle.load(f)
+        
+        # Retrieve Q-values and determine the recommended action.
+        q_values = agent.get_Q(state)
+        action = agent.choose_action(state)
+        action_mapping = {0: "Buy", 1: "Sell", 2: "Hold"}
+        recommended_action = action_mapping.get(action, str(action))
+        
+        # Get current date and price.
+        last_date = stock_data['Date'].iloc[-1]
+        
+        return jsonify({
+            'model_used': 'Q-learning',
+            'symbol': stock_symbol,
+            'current_date': last_date.strftime('%Y-%m-%d'),
+            'current_price': float(current_close),
+            'predicted_action': recommended_action,
+            'q_values': q_values.tolist()
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error making Q-learning prediction: {str(e)}'}), 500
 
 
 

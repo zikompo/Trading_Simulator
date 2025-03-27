@@ -3,7 +3,7 @@ import axios from 'axios';
 import './App.css';
 
 function App() {
-  // Use separate states: stockSymbol for the ticker and selectedModel for the chosen model.
+  // Separate states for stock symbol, selected model, uploaded model file, etc.
   const [stockSymbol, setStockSymbol] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [modelFile, setModelFile] = useState(null);
@@ -52,8 +52,9 @@ function App() {
         endpoint = '/predict_knn';
       } else if (selectedModel.toUpperCase() === 'LINEAR_REGRESSION_MODEL') {
         endpoint = '/predict_linear';
-      } 
-      // You can extend the logic above for other models.
+      } else if (selectedModel.toUpperCase() === 'Q_LEARNING_AGENT') {
+        endpoint = '/predict_qlearning';
+      }
   
       const res = await axios.post(endpoint, formData, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -67,7 +68,6 @@ function App() {
     }
   };
   
-
   const handleUploadSubmit = async (e) => {
     e.preventDefault();
     if (!selectedModel || !modelFile) {
@@ -177,11 +177,11 @@ function App() {
                 />
               </div>
               <div className="input-group file-upload">
-                <label htmlFor="modelFile">Model File (.h5)</label>
+                <label htmlFor="modelFile">Model File (.h5 or .pkl)</label>
                 <input
                   type="file"
                   id="modelFile"
-                  accept=".h5"
+                  accept=".h5,.pkl"
                   onChange={(e) => setModelFile(e.target.files[0])}
                   required
                 />
@@ -228,57 +228,67 @@ function App() {
                 </div>
               </div>
 
-              <div className="card chart-card">
-                <h2>Price Forecast</h2>
-                <div className="chart-container">
-                  <img
-                    src={`data:image/png;base64,${predictionResult.plot}`}
-                    alt={`${predictionResult.symbol} Price Prediction Chart`}
-                    className="prediction-chart"
-                  />
+              {predictionResult.model_used === "Q-learning" ? (
+                <div className="card qlearning-card">
+                  <h2>Trading Signal</h2>
+                  <p><strong>Recommended Action:</strong> {predictionResult.predicted_action}</p>
+                  <p><strong>Q-values:</strong> {predictionResult.q_values.join(", ")}</p>
                 </div>
-              </div>
+              ) : (
+                <>
+                  <div className="card chart-card">
+                    <h2>Price Forecast</h2>
+                    <div className="chart-container">
+                      <img
+                        src={`data:image/png;base64,${predictionResult.plot}`}
+                        alt={`${predictionResult.symbol} Price Prediction Chart`}
+                        className="prediction-chart"
+                      />
+                    </div>
+                  </div>
 
-              <div className="card prediction-table-card">
-                <h2>Trading Signals</h2>
-                <div className="table-container">
-                  <table className="prediction-table">
-                    <thead>
-                      <tr>
-                        <th>Day</th>
-                        <th>Date</th>
-                        <th>Predicted Price</th>
-                        <th>Expected Change</th>
-                        <th>Signal</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {predictionResult.predictions.map((pred) => {
-                        const futureDate = computeFutureDate(predictionResult.current_date, pred.day);
-                        const changeFormatted = pred.expected_return > 0
-                          ? `+${pred.expected_return.toFixed(2)}%`
-                          : `${pred.expected_return.toFixed(2)}%`;
-                        
-                        return (
-                          <tr key={pred.day}>
-                            <td>{pred.day}</td>
-                            <td>{futureDate}</td>
-                            <td className="price-cell">${pred.predicted_price.toFixed(2)}</td>
-                            <td className={pred.expected_return >= 0 ? "positive-change" : "negative-change"}>
-                              {changeFormatted}
-                            </td>
-                            <td>
-                              <span className={`signal-badge ${pred.decision.toLowerCase()}`}>
-                                {pred.decision}
-                              </span>
-                            </td>
+                  <div className="card prediction-table-card">
+                    <h2>Trading Signals</h2>
+                    <div className="table-container">
+                      <table className="prediction-table">
+                        <thead>
+                          <tr>
+                            <th>Day</th>
+                            <th>Date</th>
+                            <th>Predicted Price</th>
+                            <th>Expected Change</th>
+                            <th>Signal</th>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                        </thead>
+                        <tbody>
+                          {predictionResult.predictions.map((pred) => {
+                            const futureDate = computeFutureDate(predictionResult.current_date, pred.day);
+                            const changeFormatted = pred.expected_return > 0
+                              ? `+${pred.expected_return.toFixed(2)}%`
+                              : `${pred.expected_return.toFixed(2)}%`;
+                            
+                            return (
+                              <tr key={pred.day}>
+                                <td>{pred.day}</td>
+                                <td>{futureDate}</td>
+                                <td className="price-cell">${pred.predicted_price.toFixed(2)}</td>
+                                <td className={pred.expected_return >= 0 ? "positive-change" : "negative-change"}>
+                                  {changeFormatted}
+                                </td>
+                                <td>
+                                  <span className={`signal-badge ${pred.decision.toLowerCase()}`}>
+                                    {pred.decision}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
             </>
           )}
         </div>
