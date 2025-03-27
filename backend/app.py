@@ -224,7 +224,7 @@ def predict_lstm():
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
         days_ahead = int(request.form.get('days_ahead', 1))
-        days_ahead = min(days_ahead, 5)
+        days_ahead = days_ahead
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
@@ -275,7 +275,7 @@ def predict_kernel():
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
         days_ahead = int(request.form.get('days_ahead', 1))
-        days_ahead = min(days_ahead, 5)
+        days_ahead = days_ahead
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
@@ -337,7 +337,7 @@ def predict_knn():
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
         days_ahead = int(request.form.get('days_ahead', 1))
-        days_ahead = min(days_ahead, 5)
+        days_ahead = days_ahead
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
@@ -419,7 +419,7 @@ def predict_linear():
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
         days_ahead = int(request.form.get('days_ahead', 1))
-        days_ahead = min(days_ahead, 5)
+        days_ahead = days_ahead
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
@@ -639,7 +639,7 @@ def predict_rnn():
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
         days_ahead = int(request.form.get('days_ahead', 1))
-        days_ahead = min(days_ahead, 5)
+        days_ahead = days_ahead
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400

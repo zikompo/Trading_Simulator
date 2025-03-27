@@ -137,12 +137,12 @@ function App() {
                 <small>Enter stock ticker symbol (AAPL, MSFT, etc.)</small>
               </div>
               <div className="input-group">
-                <label htmlFor="predictionDays">Number of Days (1 to 5)</label>
+                <label htmlFor="predictionDays">Number of Days</label>
                 <input
                   type="number"
                   id="predictionDays"
                   min="1"
-                  max="5"
+                  max="500"
                   value={predictionDays}
                   onChange={(e) => setPredictionDays(e.target.value)}
                   required
