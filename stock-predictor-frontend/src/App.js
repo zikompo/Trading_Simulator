@@ -165,7 +165,8 @@ function App() {
               <div className="models-list">
                 <p>Select from available models:</p>
                 <div className="model-chips">
-                  {availableModels.map((m) => (
+                  {availableModels.filter((m) => !m.toLowerCase().includes("scaler")) 
+                 .map((m) =>  (
                     <button
                       key={m}
                       className={`model-chip ${selectedModel === m ? "selected" : ""}`}
