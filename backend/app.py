@@ -129,33 +129,7 @@ def predict_future_prices(model, latest_sequence, scaler, days_ahead=1, features
     
     return predictions
 
-def predict_kernel_regression(df, model_path, days_ahead=1, sequence_length=60):
-    """
-    Predict future prices using Kernel Regression model.
-    Always predicts the next day's price.
-    """
-    features = ['Open', 'High', 'Low', 'Close', 'Volume']
-    data = df[features].values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data)
-    
-    model = joblib.load(model_path)
-    latest_sequence = scaled_data[-sequence_length:].flatten()
-    
-    predictions = []
-    current_sequence = latest_sequence.copy()
-    
-    for _ in range(days_ahead):
-        next_pred_scaled = model.predict(current_sequence.reshape(1, -1))[0]
-        dummy = np.zeros((1, 5))
-        dummy[0, 3] = next_pred_scaled  # Close price index
-        next_price = float(scaler.inverse_transform(dummy)[0, 3])
-        predictions.append(next_price)
-        
-        current_sequence = np.roll(current_sequence, -5)
-        current_sequence[-5:] = scaler.transform(np.array([[0, 0, 0, next_pred_scaled, 0]]))
-    
-    return predictions
+
 
 def make_trading_decisions(predictions, current_price, threshold=0.01):
     """Generate trading signals based on predicted prices."""
@@ -293,50 +267,80 @@ def predict_lstm():
 @app.route('/predict_kernel', methods=['POST'])
 def predict_kernel():
     """
-    Kernel Regression prediction route.
+    Kernel Ridge Regression prediction route.
     Expects form fields:
-      - 'symbol': the model symbol (used to locate the model file)
+      - 'symbol': the model symbol (for lookup)
       - 'stock': the stock ticker for which to fetch data
-    This endpoint always predicts the next day's price.
+    This endpoint predicts the next day's closing price using the improved
+    Kernel Ridge Regression model (with Nystroem kernel approximation) trained on
+    High, Open, and Low prices.
     """
     try:
+        # Retrieve input parameters.
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
-        
-        # Always predict next day
-        days_ahead = 1
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
         
+        # Default to AAPL if no valid stock ticker is provided.
         stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
-
-        model_path = os.path.join(app.config['MODEL_FOLDER'], 'kernel_model.pkl')
-        if not os.path.exists(model_path):
-            return jsonify({'error': f'No trained kernel model found at {model_path}. Please train the model first.'}), 404
-
-        stock_data = get_yfinance_data(stock_symbol)
-        data_path = os.path.join(app.config['DATA_FOLDER'], f'{stock_symbol}_kernel_data.csv')
-        stock_data.to_csv(data_path, index=False)
         
+        # Fetch stock data using yfinance.
+        stock_data = get_yfinance_data(stock_symbol)
+        if stock_data.empty:
+            return jsonify({'error': f'No data found for stock symbol {stock_symbol}.'}), 404
+        
+        # For this improved model, we use only the High, Open, and Low prices.
+        features = ['High', 'Open', 'Low']
+        # Use the latest available row as the input features.
+        X_input = stock_data[features].iloc[-1].values.reshape(1, -1)
+        
+        # Load the saved pipeline model.
+        model_path = os.path.join(app.config['MODEL_FOLDER'], 'kernel_ridge_model_approx.pkl')
+        if not os.path.exists(model_path):
+            return jsonify({'error': f'No trained Kernel Ridge model found at {model_path}. Please train and save the model first.'}), 404
+        
+        import pickle
+        with open(model_path, "rb") as f:
+            kr_pipeline = pickle.load(f)
+        
+        # Predict the next day's closing price.
+        predicted_price = kr_pipeline.predict(X_input)[0]
+        
+        # Get the current closing price.
         current_price = stock_data['Close'].iloc[-1]
+        
+        # Compute expected return (percentage change).
+        expected_return = (predicted_price - current_price) / current_price * 100
+        
+        # Generate a trading decision.
+        decision = "BUY" if predicted_price > current_price else "SELL" if predicted_price < current_price else "HOLD"
+        
+        # Prepare the predictions list.
+        predictions = [{
+            'day': 1,
+            'predicted_price': float(predicted_price),
+            'expected_return': float(expected_return),
+            'decision': decision
+        }]
+        
+        # Generate a prediction plot using your helper function.
+        plot_img = create_prediction_plot(stock_data, predictions, stock_symbol)
         last_date = stock_data['Date'].iloc[-1]
         
-        future_prices = predict_kernel_regression(stock_data, model_path, days_ahead)
-        decisions = make_trading_decisions(future_prices, current_price)
-        plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
-        
         return jsonify({
-            'model_used': 'Kernel Regression',
+            'model_used': 'Kernel Ridge Regression (Approx)',
             'symbol': stock_symbol,
             'current_date': last_date.strftime('%Y-%m-%d'),
             'current_price': float(current_price),
-            'predictions': decisions,
+            'predictions': predictions,
             'plot': plot_img
         })
         
     except Exception as e:
-        return jsonify({'error': f'Error making kernel prediction: {str(e)}'}), 500
+        return jsonify({'error': f'Error making Kernel Ridge prediction: {str(e)}'}), 500
+
 
 @app.route('/predict_knn', methods=['POST'])
 def predict_knn():

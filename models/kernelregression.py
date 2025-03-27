@@ -1,106 +1,147 @@
 import numpy as np
-from sklearn.kernel_ridge import KernelRidge
-from sklearn.metrics import mean_squared_error, r2_score
+import pandas as pd
+import os
 import joblib
 import gc
-import os
 
-from preprocessing import prepare_data_for_training
+from sklearn.kernel_ridge import KernelRidge
+from sklearn.model_selection import cross_val_score, GridSearchCV
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
-def train_kernel_regression(file_path, sequence_length=60, 
-                           steps_per_epoch=100, epochs=10, 
-                           batch_size=32, model_save_path="kernel_model.pkl"):
+def advanced_feature_engineering(df):
     """
-    Train a kernel regression model with memory efficiency in mind.
-    
-    Args:
-        file_path: Path to the CSV data file
-        sequence_length: Number of days in each sequence
-        steps_per_epoch: Number of batches to process per epoch
-        epochs: Number of training epochs
-        batch_size: Number of samples per batch
-        model_save_path: Where to save the trained model
-    
-    Returns:
-        Trained model and validation metrics
+    Create additional features for more robust prediction
     """
-    print("Preparing data...")
-    train_gen, X_val, y_val, scaler = prepare_data_for_training(
-        file_path, sequence_length
+    df['Price_Change'] = df['Close'].pct_change()
+    df['Moving_Average_5'] = df['Close'].rolling(window=5).mean()
+    df['Moving_Average_10'] = df['Close'].rolling(window=10).mean()
+    df['Volume_Change'] = df['Volume'].pct_change()
+    
+    df['High_Low_Ratio'] = df['High'] / df['Low']
+    df['Open_Close_Ratio'] = df['Open'] / df['Close']
+    
+    return df
+
+def prepare_data(file_path, test_size=0.2, look_back=5):
+    """
+    Comprehensive data preparation with advanced feature engineering
+    """
+    df = pd.read_csv(file_path, parse_dates=['Date'])
+    
+    df = df.sort_values('Date')
+    
+    df = advanced_feature_engineering(df)
+    
+    df.dropna(inplace=True)
+    
+    feature_columns = [
+        'Open', 'High', 'Low', 'Volume', 
+        'Price_Change', 'Moving_Average_5', 
+        'Moving_Average_10', 'Volume_Change', 
+        'High_Low_Ratio', 'Open_Close_Ratio'
+    ]
+    
+    all_X, all_y = [], []
+    
+    for symbol in df['Symbol'].unique():
+        symbol_df = df[df['Symbol'] == symbol]
+        
+        for i in range(len(symbol_df) - look_back):
+            seq = symbol_df[feature_columns].iloc[i:i+look_back].values.flatten()
+            target = symbol_df['Close'].iloc[i+look_back]
+            
+            all_X.append(seq)
+            all_y.append(target)
+    
+    X = np.array(all_X)
+    y = np.array(all_y)
+    
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+    
+    split_idx = int(len(X_scaled) * (1 - test_size))
+    X_train, X_test = X_scaled[:split_idx], X_scaled[split_idx:]
+    y_train, y_test = y[:split_idx], y[split_idx:]
+    
+    return X_train, X_test, y_train, y_test, scaler
+
+def train_kernel_regression(file_path, model_save_path="kernel_model.pkl", epochs=10):
+    """
+    Advanced Kernel Ridge Regression with hyperparameter tuning and epoch tracking
+    """
+    X_train, X_test, y_train, y_test, scaler = prepare_data(file_path)
+    
+    param_grid = {
+        'alpha': [0.1, 1.0, 10.0],
+        'kernel': ['linear', 'rbf', 'polynomial'],
+        'gamma': ['scale', 'auto', 0.1, 1.0]
+    }
+    
+    krr = KernelRidge()
+    grid_search = GridSearchCV(
+        estimator=krr, 
+        param_grid=param_grid, 
+        cv=5, 
+        scoring='neg_mean_squared_error',
+        n_jobs=-1
     )
     
-    print("Initializing model...")
-    
-    if len(X_val) > 1000:
-        X_val_sample = X_val[:1000]
-        y_val_sample = y_val[:1000]
-    else:
-        X_val_sample = X_val
-        y_val_sample = y_val
-    
-    model = KernelRidge(alpha=1.0, kernel='linear')
-    
-    print(f"Starting training for {epochs} epochs...")
+    # Epoch tracking
+    epoch_losses = []
     for epoch in range(epochs):
-        print(f"Epoch {epoch+1}/{epochs}")
+        print(f"\nEpoch {epoch + 1}/{epochs}")
         
-        epoch_losses = []
-        for step in range(steps_per_epoch):
-            X_batch, y_batch = next(train_gen)
-            
-            model.fit(X_batch, y_batch)
-            
-            y_pred = model.predict(X_batch)
-            loss = mean_squared_error(y_batch, y_pred)
-            epoch_losses.append(loss)
-            
-            if (step + 1) % 10 == 0:
-                print(f"  Step {step+1}/{steps_per_epoch} - Loss: {loss:.6f}")
-                
-            gc.collect()
-            
-        val_chunk_size = 200
-        val_predictions = []
+        # Fit the grid search
+        grid_search.fit(X_train, y_train)
         
-        for i in range(0, len(X_val), val_chunk_size):
-            X_val_chunk = X_val[i:i+val_chunk_size]
-            val_predictions.extend(model.predict(X_val_chunk))
-            
-        val_mse = mean_squared_error(y_val, val_predictions)
-        val_r2 = r2_score(y_val, val_predictions)
+        # Get best model
+        best_model = grid_search.best_estimator_
         
-        print(f"Epoch {epoch+1} completed - Avg Loss: {np.mean(epoch_losses):.6f}, Val MSE: {val_mse:.6f}, Val R²: {val_r2:.4f}")
+        # Predict and calculate loss
+        y_pred_train = best_model.predict(X_train)
+        epoch_loss = mean_squared_error(y_train, y_pred_train)
+        epoch_losses.append(epoch_loss)
         
-        
-    print("Training completed. Final evaluation:")
-    val_predictions = []
-    for i in range(0, len(X_val), val_chunk_size):
-        X_val_chunk = X_val[i:i+val_chunk_size]
-        val_predictions.extend(model.predict(X_val_chunk))
-        
-    val_mse = mean_squared_error(y_val, val_predictions)
-    val_r2 = r2_score(y_val, val_predictions)
-    print(f"Final validation MSE: {val_mse:.6f}, R²: {val_r2:.4f}")
+        print(f"Epoch Loss (MSE): {epoch_loss:.4f}")
+        print("Best Hyperparameters:", grid_search.best_params_)
     
-    joblib.dump(model, model_save_path)
-    print(f"Model saved to {model_save_path}")
+    # Final evaluation
+    best_model = grid_search.best_estimator_
+    y_pred_train = best_model.predict(X_train)
+    y_pred_test = best_model.predict(X_test)
     
-    return model, (val_mse, val_r2)
+    train_mse = mean_squared_error(y_train, y_pred_train)
+    test_mse = mean_squared_error(y_test, y_pred_test)
+    train_mae = mean_absolute_error(y_train, y_pred_train)
+    test_mae = mean_absolute_error(y_test, y_pred_test)
+    train_r2 = r2_score(y_train, y_pred_train)
+    test_r2 = r2_score(y_test, y_pred_test)
+    
+    print("\nFinal Training Metrics:")
+    print(f"MSE: {train_mse:.4f}")
+    print(f"MAE: {train_mae:.4f}")
+    print(f"R2 Score: {train_r2:.4f}")
+    
+    print("\nFinal Testing Metrics:")
+    print(f"MSE: {test_mse:.4f}")
+    print(f"MAE: {test_mae:.4f}")
+    print(f"R2 Score: {test_r2:.4f}")
+    
+    joblib.dump({
+        'model': best_model,
+        'scaler': scaler
+    }, model_save_path)
+    
+    print(f"\nModel saved to {model_save_path}")
+    
+    return best_model, (train_mse, test_mse, train_r2, test_r2)
 
 if __name__ == "__main__":
-    model_dir = os.path.join("backend", "models")
-    os.makedirs(model_dir, exist_ok=True)
-    
-    model_save_path = os.path.join(model_dir, "kernel_model.pkl")
+    os.makedirs("models", exist_ok=True)
     
     model, metrics = train_kernel_regression(
-        "data/updated_data.csv",
-        sequence_length=30,  
-        steps_per_epoch=50,
-        epochs=5,
-        batch_size=16,  
-        model_save_path=model_save_path 
+        "/Users/devshah/Documents/WorkSpace/University/year 3/CSC392/Trading_Simulator/data/updated_data.csv", 
+        model_save_path="models/kernel_regression_model.pkl",
+        epochs=10  # You can adjust the number of epochs
     )
-    
-    print(f"Training completed with MSE: {metrics[0]:.6f}, R²: {metrics[1]:.4f}")
-    print(f"Model saved to {model_save_path}")
