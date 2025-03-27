@@ -15,7 +15,6 @@ from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
 import joblib
 from database import store_model
-
 from database import get_all_models  # make sure this is imported
 
 # Apply nest_asyncio to support async operations if needed
@@ -37,7 +36,6 @@ for folder in [UPLOAD_FOLDER, MODEL_FOLDER, DATA_FOLDER]:
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MODEL_FOLDER'] = MODEL_FOLDER
 app.config['DATA_FOLDER'] = DATA_FOLDER
-
 
 MODEL_FOLDER = "models"  # or just "models" if you're already inside backend/
 
@@ -73,7 +71,6 @@ def get_yfinance_data(symbol, start_date="2022-03-19", end_date=None):
     Downloads data from start_date to today (or specified end_date),
     resets the index, and sorts the data by date.
     """
-
     if end_date is None:
         end_date = pd.Timestamp.today().strftime('%Y-%m-%d')
     
@@ -82,7 +79,6 @@ def get_yfinance_data(symbol, start_date="2022-03-19", end_date=None):
     if isinstance(df.columns, pd.MultiIndex):
         # Use the 'Price' level (or level 0) instead of the last level
         df.columns = df.columns.get_level_values('Price')
-        # Optionally, remove the column name
         df.columns.name = None
     print("After flattening:", df.columns)
 
@@ -109,14 +105,15 @@ def prepare_latest_data(df, sequence_length=60):
     latest_sequence_scaled = scaler.transform(latest_sequence).reshape(1, sequence_length, len(features))
     return latest_sequence_scaled, scaler
 
-def predict_future_prices(model, latest_sequence, scaler, days_ahead=10, features_count=5):
+def predict_future_prices(model, latest_sequence, scaler, days_ahead=1, features_count=5):
     """
-    Predict future prices for multiple days ahead using the Keras LSTM model.
-    Returns a list of predicted prices.
+    Predict future prices for the next day using the Keras LSTM model.
+    Returns a list with a single predicted price.
     """
     predictions = []
     current_sequence = latest_sequence.copy()
     
+    # Since we always predict only the next day, run the loop once.
     for _ in range(days_ahead):
         next_pred = float(model.predict(current_sequence, verbose=0)[0, 0])
         dummy = np.zeros((1, features_count))
@@ -129,6 +126,34 @@ def predict_future_prices(model, latest_sequence, scaler, days_ahead=10, feature
         new_pred[0, 0, :] = current_sequence[0, -1, :].copy()
         new_pred[0, 0, 3] = next_pred  # update close price with prediction
         current_sequence = np.append(current_sequence[:, 1:, :], new_pred, axis=1)
+    
+    return predictions
+
+def predict_kernel_regression(df, model_path, days_ahead=1, sequence_length=60):
+    """
+    Predict future prices using Kernel Regression model.
+    Always predicts the next day's price.
+    """
+    features = ['Open', 'High', 'Low', 'Close', 'Volume']
+    data = df[features].values
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(data)
+    
+    model = joblib.load(model_path)
+    latest_sequence = scaled_data[-sequence_length:].flatten()
+    
+    predictions = []
+    current_sequence = latest_sequence.copy()
+    
+    for _ in range(days_ahead):
+        next_pred_scaled = model.predict(current_sequence.reshape(1, -1))[0]
+        dummy = np.zeros((1, 5))
+        dummy[0, 3] = next_pred_scaled  # Close price index
+        next_price = float(scaler.inverse_transform(dummy)[0, 3])
+        predictions.append(next_price)
+        
+        current_sequence = np.roll(current_sequence, -5)
+        current_sequence[-5:] = scaler.transform(np.array([[0, 0, 0, next_pred_scaled, 0]]))
     
     return predictions
 
@@ -150,7 +175,7 @@ def make_trading_decisions(predictions, current_price, threshold=0.01):
 
 def create_prediction_plot(historical_data, decisions, symbol):
     """
-    Create a plot showing historical prices (last 30 days) and the predicted future prices.
+    Create a plot showing historical prices (last 30 days) and the predicted future price.
     Returns the plot as a base64 encoded string.
     """
     last_date = historical_data['Date'].iloc[-1]
@@ -161,7 +186,7 @@ def create_prediction_plot(historical_data, decisions, symbol):
     
     plt.figure(figsize=(10, 6))
     plt.plot(historical_plot['Date'], historical_plot['Close'], color='blue', marker='o', label='Historical Prices')
-    plt.plot(future_dates, predicted_prices, color='red', linestyle='--', marker='o', label='Predicted Prices')
+    plt.plot(future_dates, predicted_prices, color='red', linestyle='--', marker='o', label='Predicted Price')
     plt.axvline(x=last_date, color='green', linestyle='-', label='Current Date')
     plt.title(f'{symbol} Price Prediction')
     plt.xlabel('Date')
@@ -197,7 +222,6 @@ def upload_model():
 
     file = request.files['model']
     raw_symbol = request.form.get('symbol', '')
-    # Force raw_symbol to a plain string
     model_symbol = str(raw_symbol).split()[0].strip().upper()
     
     if not file.filename:
@@ -221,61 +245,37 @@ def predict_lstm():
     Expects form fields:
       - 'symbol': the model symbol (used to locate the model file)
       - 'stock': the stock ticker for which to fetch data
-      - 'days_ahead': number of days to predict (integer)
+    This endpoint always predicts the next day's price.
     """
     try:
-        # Directly convert the form values to plain strings.
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
-        days_ahead_param = str(request.form.get('days_ahead', '10')).strip()
         
-        # Debug prints (you can remove these later)
-        print("Model Symbol:", model_symbol, type(model_symbol))
-        print("Stock Field:", stock_field, type(stock_field))
-        print("Days Ahead Param:", days_ahead_param, type(days_ahead_param))
+        # Always predict next day
+        days_ahead = 1
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
         
-        # If the stock ticker is not provided or equals the model symbol, default to "AAPL"
-        if stock_field == "" or stock_field == model_symbol:
-            stock_symbol = "AAPL"
-        else:
-            stock_symbol = stock_field
+        stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
 
-        try:
-            days_ahead = int(days_ahead_param)
-            if days_ahead <= 0:
-                raise ValueError("days_ahead must be positive")
-        except ValueError:
-            return jsonify({'error': 'Invalid days_ahead. Must be a positive integer.'}), 400
-
-        # Locate the model file (only LSTM models in .h5 format are handled here)
         model_path = get_local_model_path(model_symbol)
         if model_path is None:
             return jsonify({'error': f'No trained model found for {model_symbol}. Please upload a model first.'}), 404
         if not model_path.endswith('.h5'):
             return jsonify({'error': 'This endpoint only supports LSTM models in .h5 format.'}), 400
 
-        # Fetch stock data using yfinance
         stock_data = get_yfinance_data(stock_symbol)
         data_path = os.path.join(app.config['DATA_FOLDER'], f'{stock_symbol}_data.csv')
         stock_data.to_csv(data_path, index=False)
         
-        # Load the LSTM model
         model = load_model(model_path)
-        
-        # Prepare the latest data sequence and scaler
         latest_sequence, scaler = prepare_latest_data(stock_data)
         current_price = stock_data['Close'].iloc[-1]
         last_date = stock_data['Date'].iloc[-1]
         
-        # Predict future prices using the LSTM model
         future_prices = predict_future_prices(model, latest_sequence, scaler, days_ahead)
-        # Generate trading decisions based on predictions
         decisions = make_trading_decisions(future_prices, current_price)
-        
-        # Generate a prediction plot (chart)
         plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
         
         return jsonify({
@@ -290,54 +290,6 @@ def predict_lstm():
     except Exception as e:
         return jsonify({'error': f'Error making prediction: {str(e)}'}), 500
 
-
-def predict_kernel_regression(df, model_path, days_ahead=10, sequence_length=60):
-    """
-    Predict future prices using Kernel Regression model.
-    
-    Args:
-    - df: DataFrame with stock data
-    - model_path: Path to the saved kernel regression model
-    - days_ahead: Number of days to predict
-    - sequence_length: Number of previous days to use for prediction
-    
-    Returns:
-    - predictions: List of predicted future prices
-    """
-    # Select features
-    features = ['Open', 'High', 'Low', 'Close', 'Volume']
-    
-    # Prepare data
-    data = df[features].values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data)
-    
-    # Load the model
-    model = joblib.load(model_path)
-    
-    # Prepare input sequence (last 60 days)
-    latest_sequence = scaled_data[-sequence_length:].flatten()
-    
-    # Predict future prices
-    predictions = []
-    current_sequence = latest_sequence.copy()
-    
-    for _ in range(days_ahead):
-        # Predict next price
-        next_pred_scaled = model.predict(current_sequence.reshape(1, -1))[0]
-        
-        # Inverse transform to get actual price
-        dummy = np.zeros((1, 5))
-        dummy[0, 3] = next_pred_scaled  # Close price index
-        next_price = float(scaler.inverse_transform(dummy)[0, 3])
-        predictions.append(next_price)
-        
-        # Update sequence: slide window and add new prediction
-        current_sequence = np.roll(current_sequence, -5)
-        current_sequence[-5:] = scaler.transform(np.array([[0, 0, 0, next_pred_scaled, 0]]))
-    
-    return predictions
-
 @app.route('/predict_kernel', methods=['POST'])
 def predict_kernel():
     """
@@ -345,48 +297,33 @@ def predict_kernel():
     Expects form fields:
       - 'symbol': the model symbol (used to locate the model file)
       - 'stock': the stock ticker for which to fetch data
-      - 'days_ahead': number of days to predict (integer)
+    This endpoint always predicts the next day's price.
     """
     try:
-        # Validate and parse input parameters
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
-        days_ahead_param = str(request.form.get('days_ahead', '10')).strip()
+        
+        # Always predict next day
+        days_ahead = 1
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
         
-        # Default to AAPL if no stock specified
         stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
 
-        try:
-            days_ahead = int(days_ahead_param)
-            if days_ahead <= 0:
-                raise ValueError("days_ahead must be positive")
-        except ValueError:
-            return jsonify({'error': 'Invalid days_ahead. Must be a positive integer.'}), 400
-
-        # Locate the kernel regression model file
-        model_path = os.path.join('models', 'kernel_model.pkl')
+        model_path = os.path.join(app.config['MODEL_FOLDER'], 'kernel_model.pkl')
         if not os.path.exists(model_path):
             return jsonify({'error': f'No trained kernel model found at {model_path}. Please train the model first.'}), 404
 
-        # Fetch stock data 
         stock_data = get_yfinance_data(stock_symbol)
         data_path = os.path.join(app.config['DATA_FOLDER'], f'{stock_symbol}_kernel_data.csv')
         stock_data.to_csv(data_path, index=False)
         
-        # Get current price and last date
         current_price = stock_data['Close'].iloc[-1]
         last_date = stock_data['Date'].iloc[-1]
         
-        # Predict future prices
         future_prices = predict_kernel_regression(stock_data, model_path, days_ahead)
-        
-        # Generate trading decisions
         decisions = make_trading_decisions(future_prices, current_price)
-        
-        # Create prediction plot
         plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
         
         return jsonify({
@@ -400,6 +337,271 @@ def predict_kernel():
         
     except Exception as e:
         return jsonify({'error': f'Error making kernel prediction: {str(e)}'}), 500
+
+@app.route('/predict_knn', methods=['POST'])
+def predict_knn():
+    """
+    KNN prediction route.
+    Expects form fields:
+      - 'symbol': the model symbol (used to locate the model file)
+      - 'stock': the stock ticker for which to fetch data
+    This endpoint always predicts the next day's price.
+    """
+    try:
+        model_symbol = str(request.form.get('symbol', '')).strip().upper()
+        stock_field = str(request.form.get('stock', '')).strip().upper()
+
+        if model_symbol == "":
+            return jsonify({'error': 'No model symbol provided'}), 400
+
+        stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
+
+        # Locate and load the KNN model and its scaler.
+        model_path = os.path.join(app.config['MODEL_FOLDER'], 'knn_model.pkl')
+        scaler_path = os.path.join(app.config['MODEL_FOLDER'], 'scaler.pkl')
+        if not os.path.exists(model_path):
+            return jsonify({'error': f'No trained KNN model found at {model_path}. Please train the model first.'}), 404
+        if not os.path.exists(scaler_path):
+            return jsonify({'error': f'No scaler found for the KNN model at {scaler_path}. Please save the scaler along with the model.'}), 404
+
+        import pickle
+        with open(model_path, "rb") as f:
+            knn_model = pickle.load(f)
+        with open(scaler_path, "rb") as f:
+            knn_scaler = pickle.load(f)
+
+        stock_data = get_yfinance_data(stock_symbol)
+        if stock_data.empty:
+            return jsonify({'error': f'No data found for stock symbol {stock_symbol}.'}), 404
+
+        features = ['High', 'Low', 'Open', 'Volume']
+        latest_features = stock_data[features].iloc[-1:].values
+
+        latest_features_scaled = knn_scaler.transform(latest_features)
+        next_close_pred = knn_model.predict(latest_features_scaled)[0]
+        predicted_prices = [float(next_close_pred)]
+
+        current_price = stock_data['Close'].iloc[-1]
+        decisions = make_trading_decisions(predicted_prices, current_price)
+        plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
+
+        last_date = stock_data['Date'].iloc[-1]
+        if not isinstance(last_date, str):
+            last_date = last_date.strftime('%Y-%m-%d')
+
+        return jsonify({
+            'model_used': 'K-Nearest Neighbors Regression',
+            'symbol': stock_symbol,
+            'current_date': last_date,
+            'current_price': float(current_price),
+            'predictions': decisions,
+            'plot': plot_img
+        })
+
+    except Exception as e:
+        return jsonify({'error': f'Error making KNN prediction: {str(e)}'}), 500
+
+def compute_xgb_features(df):
+    """
+    Compute features for XGBoost prediction based on the training pipeline.
+    Expects df to have columns: Date, Symbol, Open, High, Low, Close, Volume.
+    Returns the dataframe with computed features and the list of features.
+    """
+    df = df.copy()
+    df['return'] = df['Close'].pct_change()
+    df['return_std_5'] = df['return'].rolling(window=5).std()
+    df['return_std_10'] = df['return'].rolling(window=10).std()
+    df['return_std_20'] = df['return'].rolling(window=20).std()
+    
+    for i in range(1, 11):
+        df[f'return_lag_{i}'] = df['return'].shift(i)
+        df[f'hl_ratio_lag_{i}'] = (df['High'] / df['Low']).shift(i)
+        df[f'co_ratio_lag_{i}'] = (df['Close'] / df['Open']).shift(i)
+        df[f'volume_change_lag_{i}'] = df['Volume'].pct_change(i)
+    
+    feature_list = [
+        'Close', 'Volume',
+        'return_std_5', 'return_std_10', 'return_std_20'
+    ]
+    for i in range(1, 11):
+        feature_list.extend([
+            f'return_lag_{i}', f'hl_ratio_lag_{i}',
+            f'co_ratio_lag_{i}', f'volume_change_lag_{i}'
+        ])
+    
+    # Drop rows with NaN values
+    df = df.dropna()
+    return df, feature_list
+
+@app.route('/predict_xgb', methods=['POST'])
+def predict_xgb():
+    """
+    XGBoost prediction route.
+    Expects form fields:
+      - 'symbol': the model symbol (for lookup)
+      - 'stock': the stock ticker for which to fetch data
+    This endpoint always predicts the next day's price.
+    """
+    try:
+        model_symbol = str(request.form.get('symbol', '')).strip().upper()
+        stock_field = str(request.form.get('stock', '')).strip().upper()
+        
+        if model_symbol == "":
+            return jsonify({'error': 'No model symbol provided'}), 400
+        
+        # Default to AAPL if no valid stock ticker provided.
+        stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
+        
+        # Fetch stock data using yfinance.
+        stock_data = get_yfinance_data(stock_symbol)
+        if stock_data.empty:
+            return jsonify({'error': f'No data found for stock symbol {stock_symbol}.'}), 404
+        
+        # Compute features using the same pipeline as during training.
+        df_features, feature_list = compute_xgb_features(stock_data)
+        if df_features.empty:
+            return jsonify({'error': 'Not enough data to compute features for prediction.'}), 400
+        
+        # Use the most recent row's features for prediction.
+        last_row = df_features.iloc[-1]
+        X_input = last_row[feature_list].values.reshape(1, -1)
+
+        selected_features = ['Close']
+        X_input = df_features[selected_features].values.reshape(1, -1)
+
+        X_input = df_features[['Close']].values.reshape(1, -1)
+        
+        # Load the saved scaler and XGBoost model.
+        scaler_path = os.path.join(app.config['MODEL_FOLDER'], 'xgb_scaler.pkl')
+        model_path = os.path.join(app.config['MODEL_FOLDER'], 'xgb_model.pkl')
+        
+        if not os.path.exists(scaler_path):
+            return jsonify({'error': f'No scaler found for XGBoost model at {scaler_path}. Please save the scaler.'}), 404
+        if not os.path.exists(model_path):
+            return jsonify({'error': f'No trained XGBoost model found at {model_path}. Please train and save the model first.'}), 404
+        
+        import pickle
+        with open(scaler_path, "rb") as f:
+            xgb_scaler = pickle.load(f)
+        with open(model_path, "rb") as f:
+            xgb_model = pickle.load(f)
+        
+        # Scale the input features.
+        X_scaled = xgb_scaler.transform(X_input)
+        pred_scaled = xgb_model.predict(X_scaled)[0]
+
+        # Since the scaler was fit on a 1-feature input, create a dummy array with 1 column.
+        dummy = np.array([[pred_scaled]])
+        pred_price = float(xgb_scaler.inverse_transform(dummy)[0, 0])
+        
+        # Get current price and date from the computed features.
+        current_price = df_features['Close'].iloc[-1]
+        last_date = df_features['Date'].iloc[-1]
+        
+        # Generate trading decisions using your helper function.
+        predictions = [pred_price]
+        decisions = make_trading_decisions(predictions, current_price)
+        
+        # Generate a prediction plot.
+        plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
+        
+        return jsonify({
+            'model_used': 'XGBoost Regression',
+            'symbol': stock_symbol,
+            'current_date': last_date.strftime('%Y-%m-%d'),
+            'current_price': float(current_price),
+            'predictions': decisions,
+            'plot': plot_img
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error making XGBoost prediction: {str(e)}'}), 500
+
+
+@app.route('/predict_xgbv2', methods=['POST'])
+def predict_xgbv2():
+    """
+    XGBoost prediction endpoint.
+    Expects form fields:
+      - 'symbol': the model symbol (used as identifier; here it indicates that the xgb model should be used)
+      - 'stock': the stock ticker for which to fetch data
+    This endpoint always predicts the next day's price based on the last available data row.
+    """
+    try:
+        model_symbol = str(request.form.get('symbol', '')).strip().upper()
+        stock_field = str(request.form.get('stock', '')).strip().upper()
+        
+        if model_symbol == "":
+            return jsonify({'error': 'No model symbol provided'}), 400
+        
+        # Use provided stock ticker if available; otherwise, default to "AAPL"
+        stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
+        
+        # Define the expected model path for the XGBoost model (saved as .pkl)
+        model_path = os.path.join(app.config['MODEL_FOLDER'], 'xgb_model.pkl')
+        if not os.path.exists(model_path):
+            return jsonify({'error': f'No trained XGB model found at {model_path}. Please train and upload the model first.'}), 404
+        
+        # Fetch stock data using yfinance
+        stock_data = get_yfinance_data(stock_symbol)
+        data_path = os.path.join(app.config['DATA_FOLDER'], f'{stock_symbol}_xgb_data.csv')
+        stock_data.to_csv(data_path, index=False)
+        
+        # Prepare the data for prediction consistent with training:
+        # 1. Convert Date to datetime.
+        # 2. Create a Date ordinal feature.
+        # 3. Set the Symbol column.
+        # 4. One-hot encode the Symbol column with drop_first=True.
+        df = stock_data.copy()
+        df['Date'] = pd.to_datetime(df['Date'])
+        df['Date_ordinal'] = df['Date'].apply(lambda d: d.toordinal())
+        df['Symbol'] = stock_symbol  # ensure the symbol is set
+        
+        # Create dummy variables for Symbol as done in training
+        df_encoded = pd.get_dummies(df, columns=['Symbol'], drop_first=True)
+        
+        # Define the feature columns exactly as used in training:
+        base_features = ['Open', 'High', 'Low', 'Volume', 'Date_ordinal']
+        dummy_features = [col for col in df_encoded.columns if col.startswith('Symbol_')]
+        feature_cols = base_features + dummy_features
+        
+        # If your training data included additional dummy columns (because of multiple symbols),
+        # you can load them from a saved file. For example:
+        # expected_feature_cols = joblib.load(os.path.join(app.config['MODEL_FOLDER'], 'xgb_feature_columns.pkl'))
+        # and then reindex with: 
+        # X_pred = df_encoded.reindex(columns=expected_feature_cols, fill_value=0).iloc[[-1]]
+        #
+        # For this example, we assume the current dummy columns are sufficient.
+        X_pred = df_encoded.reindex(columns=feature_cols, fill_value=0).iloc[[-1]]
+        
+        # Extract the current closing price and the date for reporting
+        current_price = df['Close'].iloc[-1]
+        last_date = df['Date'].iloc[-1]
+        
+        # Load the trained XGBoost model and make the prediction
+        model = joblib.load(model_path)
+        xgb_pred = model.predict(X_pred)[0]
+        
+        # Prepare the result by generating trading decisions and a plot.
+        predictions = [float(xgb_pred)]
+        decisions = make_trading_decisions(predictions, current_price)
+        plot_img = create_prediction_plot(df, decisions, stock_symbol)
+        
+        return jsonify({
+            'model_used': 'XGBoost Regression',
+            'symbol': stock_symbol,
+            'current_date': last_date.strftime('%Y-%m-%d'),
+            'current_price': float(current_price),
+            'predictions': decisions,
+            'plot': plot_img
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error making XGB prediction: {str(e)}'}), 500
+
+
+
+
 
 
 if __name__ == '__main__':

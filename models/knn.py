@@ -255,6 +255,8 @@ class SymbolTimeSeriesSplitter:
         # Save the model
         with open('backend/models/knn_model.pkl', "wb") as f:
             pickle.dump(best_knn, f)
+        with open('backend/models/scaler.pkl', "wb") as f:
+            pickle.dump(self.scaler, f)
         
         # Log results
         logging.info("Best Hyperparameters:")
@@ -294,7 +296,7 @@ class SymbolTimeSeriesSplitter:
 
 def main():
     # Path to your CSV file
-    data_path = '/Users/arsencameron/Documents/Projects/Trading_Simulator/data/updated_data.csv'
+    data_path = '/Users/devshah/Documents/WorkSpace/University/year 3/CSC392/Trading_Simulator/data/updated_data.csv'
     
     # Initialize and run analyzer
     analyzer = SymbolTimeSeriesSplitter(data_path)
