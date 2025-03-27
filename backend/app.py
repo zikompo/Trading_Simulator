@@ -13,7 +13,10 @@ import yfinance as yf
 from flask import Flask, request, render_template, jsonify
 from tensorflow.keras.models import load_model
 from sklearn.preprocessing import MinMaxScaler
-import pickle
+import joblib
+from database import store_model
+
+from database import get_all_models  # make sure this is imported
 
 # Apply nest_asyncio to support async operations if needed
 nest_asyncio.apply()
@@ -34,6 +37,16 @@ for folder in [UPLOAD_FOLDER, MODEL_FOLDER, DATA_FOLDER]:
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MODEL_FOLDER'] = MODEL_FOLDER
 app.config['DATA_FOLDER'] = DATA_FOLDER
+
+
+MODEL_FOLDER = os.path.join("backend", "models")  # or just "models" if you're already inside backend/
+
+async def sync_all_models():
+    for filename in os.listdir(MODEL_FOLDER):
+        if filename.endswith('.h5') or filename.endswith('.pkl'):
+            symbol = filename.rsplit('.', 1)[0].upper()
+            file_path = os.path.join(MODEL_FOLDER, filename)
+            await store_model(symbol, file_path)
 
 # ---------------------------
 # Helper Functions
@@ -172,13 +185,8 @@ def home():
 
 @app.route('/available-models')
 def available_models():
-    """Return a list of available model symbols from the local model folder."""
-    models = []
-    folder = app.config['MODEL_FOLDER']
-    for file in os.listdir(folder):
-        if file.endswith('.h5') or file.endswith('.pkl'):
-            symbol = file.rsplit('.', 1)[0].upper()
-            models.append(symbol)
+    """Return a list of available model symbols from the database."""
+    models = loop.run_until_complete(get_all_models())
     return jsonify({'models': models})
 
 @app.route('/upload', methods=['POST'])
@@ -283,6 +291,117 @@ def predict_lstm():
         return jsonify({'error': f'Error making prediction: {str(e)}'}), 500
 
 
+def predict_kernel_regression(df, model_path, days_ahead=10, sequence_length=60):
+    """
+    Predict future prices using Kernel Regression model.
+    
+    Args:
+    - df: DataFrame with stock data
+    - model_path: Path to the saved kernel regression model
+    - days_ahead: Number of days to predict
+    - sequence_length: Number of previous days to use for prediction
+    
+    Returns:
+    - predictions: List of predicted future prices
+    """
+    # Select features
+    features = ['Open', 'High', 'Low', 'Close', 'Volume']
+    
+    # Prepare data
+    data = df[features].values
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(data)
+    
+    # Load the model
+    model = joblib.load(model_path)
+    
+    # Prepare input sequence (last 60 days)
+    latest_sequence = scaled_data[-sequence_length:].flatten()
+    
+    # Predict future prices
+    predictions = []
+    current_sequence = latest_sequence.copy()
+    
+    for _ in range(days_ahead):
+        # Predict next price
+        next_pred_scaled = model.predict(current_sequence.reshape(1, -1))[0]
+        
+        # Inverse transform to get actual price
+        dummy = np.zeros((1, 5))
+        dummy[0, 3] = next_pred_scaled  # Close price index
+        next_price = float(scaler.inverse_transform(dummy)[0, 3])
+        predictions.append(next_price)
+        
+        # Update sequence: slide window and add new prediction
+        current_sequence = np.roll(current_sequence, -5)
+        current_sequence[-5:] = scaler.transform(np.array([[0, 0, 0, next_pred_scaled, 0]]))
+    
+    return predictions
+
+@app.route('/predict_kernel', methods=['POST'])
+def predict_kernel():
+    """
+    Kernel Regression prediction route.
+    Expects form fields:
+      - 'symbol': the model symbol (used to locate the model file)
+      - 'stock': the stock ticker for which to fetch data
+      - 'days_ahead': number of days to predict (integer)
+    """
+    try:
+        # Validate and parse input parameters
+        model_symbol = str(request.form.get('symbol', '')).strip().upper()
+        stock_field = str(request.form.get('stock', '')).strip().upper()
+        days_ahead_param = str(request.form.get('days_ahead', '10')).strip()
+        
+        if model_symbol == "":
+            return jsonify({'error': 'No model symbol provided'}), 400
+        
+        # Default to AAPL if no stock specified
+        stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
+
+        try:
+            days_ahead = int(days_ahead_param)
+            if days_ahead <= 0:
+                raise ValueError("days_ahead must be positive")
+        except ValueError:
+            return jsonify({'error': 'Invalid days_ahead. Must be a positive integer.'}), 400
+
+        # Locate the kernel regression model file
+        model_path = os.path.join('backend', 'models', 'kernel_model.pkl')
+        if not os.path.exists(model_path):
+            return jsonify({'error': f'No trained kernel model found at {model_path}. Please train the model first.'}), 404
+
+        # Fetch stock data 
+        stock_data = get_yfinance_data(stock_symbol)
+        data_path = os.path.join(app.config['DATA_FOLDER'], f'{stock_symbol}_kernel_data.csv')
+        stock_data.to_csv(data_path, index=False)
+        
+        # Get current price and last date
+        current_price = stock_data['Close'].iloc[-1]
+        last_date = stock_data['Date'].iloc[-1]
+        
+        # Predict future prices
+        future_prices = predict_kernel_regression(stock_data, model_path, days_ahead)
+        
+        # Generate trading decisions
+        decisions = make_trading_decisions(future_prices, current_price)
+        
+        # Create prediction plot
+        plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
+        
+        return jsonify({
+            'model_used': 'Kernel Regression',
+            'symbol': stock_symbol,
+            'current_date': last_date.strftime('%Y-%m-%d'),
+            'current_price': float(current_price),
+            'predictions': decisions,
+            'plot': plot_img
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error making kernel prediction: {str(e)}'}), 500
+
 
 if __name__ == '__main__':
+    asyncio.run(sync_all_models())
     app.run(debug=True, host='0.0.0.0', port=4080)
