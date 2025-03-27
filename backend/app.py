@@ -604,6 +604,100 @@ def predict_qlearning():
     except Exception as e:
         return jsonify({'error': f'Error making Q-learning prediction: {str(e)}'}), 500
 
+@app.route('/predict_rnn', methods=['POST'])
+def predict_rnn():
+    """
+    RNN prediction route.
+    Expects form fields:
+      - 'symbol': the model symbol (for lookup)
+      - 'stock': the stock ticker for which to fetch data (defaults to AAPL)
+    
+    This endpoint predicts the next day's closing price using the pre-trained
+    General RNN model and returns the predicted price, expected return,
+    a trading decision, and a plot of historical prices with the prediction.
+    """
+    try:
+        import os
+        import pickle
+        import numpy as np
+        from tensorflow.keras.models import load_model
+
+        # Retrieve input parameters.
+        model_symbol = str(request.form.get('symbol', '')).strip().upper()
+        stock_field = str(request.form.get('stock', '')).strip().upper()
+        
+        if model_symbol == "":
+            return jsonify({'error': 'No model symbol provided'}), 400
+        
+        # Default to AAPL if no valid stock ticker is provided.
+        stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
+        
+        # Fetch stock data using yfinance helper function.
+        stock_data = get_yfinance_data(stock_symbol)
+        if stock_data.empty:
+            return jsonify({'error': f'No data found for stock symbol {stock_symbol}.'}), 404
+        
+        # Define sequence length and features.
+        sequence_length = 60
+        features = ['Open', 'High', 'Low', 'Close', 'Volume']
+        if len(stock_data) < sequence_length:
+            return jsonify({'error': f'Not enough data. Need at least {sequence_length} days.'}), 400
+
+        # Load the pre-trained RNN model.
+        model_path = os.path.join(app.config['MODEL_FOLDER'], 'general_rnn_model.h5')
+        if not os.path.exists(model_path):
+            return jsonify({'error': f'No trained RNN model found at {model_path}. Please train and save the model first.'}), 404
+        rnn_model = load_model(model_path)
+        
+        # Load the scaler used during training.
+        scaler_path = os.path.join(app.config['MODEL_FOLDER'], 'rnn_scaler.pkl')
+        if not os.path.exists(scaler_path):
+            return jsonify({'error': f'No scaler found for the RNN model at {scaler_path}. Please save the scaler along with the model.'}), 404
+        scaler = joblib.load(scaler_path)
+        
+        # Prepare the latest sequence.
+        latest_sequence = stock_data[features].values[-sequence_length:]
+        latest_sequence_scaled = scaler.transform(latest_sequence).reshape(1, sequence_length, len(features))
+        
+        # Make prediction for the next day's closing price (scaled value).
+        next_price_scaled = rnn_model.predict(latest_sequence_scaled, verbose=0)[0, 0]
+        # Inverse transform the predicted value.
+        dummy = np.zeros((1, len(features)))
+        dummy[0, 3] = next_price_scaled  # index 3 corresponds to "Close"
+        next_price = scaler.inverse_transform(dummy)[0, 3]
+        
+        # Get the current price (latest available closing price).
+        current_price = stock_data['Close'].iloc[-1]
+        # Compute expected return (percentage change).
+        expected_return = (next_price - current_price) / current_price * 100
+        
+        # Generate trading decision based on a 1% threshold.
+        decision = 'BUY' if expected_return > 1 else 'SELL' if expected_return < -1 else 'HOLD'
+        
+        predictions = [{
+            'day': 1,
+            'predicted_price': float(next_price),
+            'expected_return': float(expected_return),
+            'decision': decision
+        }]
+        
+        # Create a prediction plot (using your existing helper function).
+        plot_img = create_prediction_plot(stock_data, predictions, stock_symbol)
+        last_date = stock_data['Date'].iloc[-1]
+        
+        return jsonify({
+            'model_used': 'General RNN',
+            'symbol': stock_symbol,
+            'current_date': last_date.strftime('%Y-%m-%d'),
+            'current_price': float(current_price),
+            'predictions': predictions,
+            'plot': plot_img
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error making RNN prediction: {str(e)}'}), 500
+
+
 
 
 

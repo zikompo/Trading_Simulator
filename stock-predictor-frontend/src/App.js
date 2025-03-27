@@ -54,6 +54,8 @@ function App() {
         endpoint = '/predict_linear';
       } else if (selectedModel.toUpperCase() === 'Q_LEARNING_AGENT') {
         endpoint = '/predict_qlearning';
+      } else if (selectedModel.toUpperCase() === 'GENERAL_RNN_MODEL') {
+        endpoint = '/predict_rnn';
       }
   
       const res = await axios.post(endpoint, formData, {
