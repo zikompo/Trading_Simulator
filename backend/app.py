@@ -39,7 +39,7 @@ app.config['MODEL_FOLDER'] = MODEL_FOLDER
 app.config['DATA_FOLDER'] = DATA_FOLDER
 
 
-MODEL_FOLDER = os.path.join("backend", "models")  # or just "models" if you're already inside backend/
+MODEL_FOLDER = "models"  # or just "models" if you're already inside backend/
 
 async def sync_all_models():
     for filename in os.listdir(MODEL_FOLDER):
@@ -367,7 +367,7 @@ def predict_kernel():
             return jsonify({'error': 'Invalid days_ahead. Must be a positive integer.'}), 400
 
         # Locate the kernel regression model file
-        model_path = os.path.join('backend', 'models', 'kernel_model.pkl')
+        model_path = os.path.join('models', 'kernel_model.pkl')
         if not os.path.exists(model_path):
             return jsonify({'error': f'No trained kernel model found at {model_path}. Please train the model first.'}), 404
 

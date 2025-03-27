@@ -27,7 +27,6 @@ function App() {
 
   const handlePredictSubmit = async (e) => {
     e.preventDefault();
-    // Require a stock symbol and a selected model.
     if (!stockSymbol) {
       alert('Please enter a stock symbol');
       return;
@@ -46,8 +45,17 @@ function App() {
       // 'stock' holds the ticker for which to fetch data.
       formData.append('stock', stockSymbol.toUpperCase());
       formData.append('days_ahead', daysAhead);
-
-      const res = await axios.post('/predict_lstm', formData, {
+      console.log(selectedModel)
+      // Determine the endpoint based on the selected model.
+      let endpoint = '/predict_kernel'; // default endpoint
+      if (selectedModel.toUpperCase() === 'GENERAL_LSTM_MODEL') {
+        endpoint = '/predict_lstm';
+      } else if (selectedModel.toUpperCase() === 'GRU') {
+        endpoint = '/predict_gru';
+      }
+      // You can extend the logic above for other models.
+  
+      const res = await axios.post(endpoint, formData, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       });
       setPredictionResult(res.data);
@@ -58,6 +66,7 @@ function App() {
       setLoading(false);
     }
   };
+  
 
   const handleUploadSubmit = async (e) => {
     e.preventDefault();
