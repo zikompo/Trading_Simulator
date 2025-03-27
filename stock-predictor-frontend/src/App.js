@@ -50,11 +50,9 @@ function App() {
         endpoint = '/predict_lstm';
       } else if (selectedModel.toUpperCase() === 'KNN_MODEL') {
         endpoint = '/predict_knn';
-      } else if (selectedModel.toUpperCase() === 'XGB_MODEL') {
-        endpoint = '/predict_xgb';
-      } else if (selectedModel.toUpperCase() === 'XGB_MODEL_V2') {
-        endpoint = '/predict_xgbv2';
-      }
+      } else if (selectedModel.toUpperCase() === 'LINEAR_REGRESSION_MODEL') {
+        endpoint = '/predict_linear';
+      } 
       // You can extend the logic above for other models.
   
       const res = await axios.post(endpoint, formData, {

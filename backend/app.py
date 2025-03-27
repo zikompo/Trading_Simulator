@@ -401,55 +401,54 @@ def predict_knn():
     except Exception as e:
         return jsonify({'error': f'Error making KNN prediction: {str(e)}'}), 500
 
-def compute_xgb_features(df):
+def compute_linear_features(df):
     """
-    Compute features for XGBoost prediction based on the training pipeline.
+    Compute features for linear regression prediction based on the training pipeline.
     Expects df to have columns: Date, Symbol, Open, High, Low, Close, Volume.
-    Returns the dataframe with computed features and the list of features.
+    Returns the dataframe with computed features and the list of feature columns.
     """
     df = df.copy()
-    df['return'] = df['Close'].pct_change()
-    df['return_std_5'] = df['return'].rolling(window=5).std()
-    df['return_std_10'] = df['return'].rolling(window=10).std()
-    df['return_std_20'] = df['return'].rolling(window=20).std()
+    df = df.sort_values(by='Date')
+    df['returns'] = df['Close'].pct_change()
+    df['high_low_ratio'] = df['High'] / df['Low']
+    df['close_open_ratio'] = df['Close'] / df['Open']
+    df['volume_change'] = df['Volume'].pct_change()
     
-    for i in range(1, 11):
-        df[f'return_lag_{i}'] = df['return'].shift(i)
-        df[f'hl_ratio_lag_{i}'] = (df['High'] / df['Low']).shift(i)
-        df[f'co_ratio_lag_{i}'] = (df['Close'] / df['Open']).shift(i)
-        df[f'volume_change_lag_{i}'] = df['Volume'].pct_change(i)
+    for lag in range(1, 6):
+        df[f'return_lag_{lag}'] = df['returns'].shift(lag)
+        df[f'hl_ratio_lag_{lag}'] = df['high_low_ratio'].shift(lag)
+        df[f'co_ratio_lag_{lag}'] = df['close_open_ratio'].shift(lag)
+        df[f'volume_change_lag_{lag}'] = df['volume_change'].shift(lag)
     
-    feature_list = [
-        'Close', 'Volume',
-        'return_std_5', 'return_std_10', 'return_std_20'
-    ]
-    for i in range(1, 11):
-        feature_list.extend([
-            f'return_lag_{i}', f'hl_ratio_lag_{i}',
-            f'co_ratio_lag_{i}', f'volume_change_lag_{i}'
-        ])
+    # Define target as the next day's return direction (1 if >0, else 0)
+    df['target'] = (df['returns'].shift(-1) > 0).astype(int)
     
     # Drop rows with NaN values
     df = df.dropna()
-    return df, feature_list
+    
+    # Feature columns exclude Date, Symbol, and target.
+    feature_cols = [col for col in df.columns if col not in ['Date', 'Symbol', 'target']]
+    return df, feature_cols
 
-@app.route('/predict_xgb', methods=['POST'])
-def predict_xgb():
+@app.route('/predict_linear', methods=['POST'])
+def predict_linear():
     """
-    XGBoost prediction route.
+    Linear Regression prediction route.
     Expects form fields:
       - 'symbol': the model symbol (for lookup)
       - 'stock': the stock ticker for which to fetch data
-    This endpoint always predicts the next day's price.
+    This endpoint predicts the next day's closing price using the Linear Regression model
+    trained on High, Open, and Low prices.
     """
     try:
+        # Retrieve input parameters.
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
         
-        # Default to AAPL if no valid stock ticker provided.
+        # Default to AAPL if no valid stock ticker is provided.
         stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
         
         # Fetch stock data using yfinance.
@@ -457,147 +456,55 @@ def predict_xgb():
         if stock_data.empty:
             return jsonify({'error': f'No data found for stock symbol {stock_symbol}.'}), 404
         
-        # Compute features using the same pipeline as during training.
-        df_features, feature_list = compute_xgb_features(stock_data)
-        if df_features.empty:
-            return jsonify({'error': 'Not enough data to compute features for prediction.'}), 400
+        # For this improved model, we use only the High, Open, and Low prices.
+        features = ['High', 'Open', 'Low']
+        # Use the last available row as the input features.
+        X_input = stock_data[features].iloc[-1].values.reshape(1, -1)
         
-        # Use the most recent row's features for prediction.
-        last_row = df_features.iloc[-1]
-        X_input = last_row[feature_list].values.reshape(1, -1)
-
-        selected_features = ['Close']
-        X_input = df_features[selected_features].values.reshape(1, -1)
-
-        X_input = df_features[['Close']].values.reshape(1, -1)
-        
-        # Load the saved scaler and XGBoost model.
-        scaler_path = os.path.join(app.config['MODEL_FOLDER'], 'xgb_scaler.pkl')
-        model_path = os.path.join(app.config['MODEL_FOLDER'], 'xgb_model.pkl')
-        
-        if not os.path.exists(scaler_path):
-            return jsonify({'error': f'No scaler found for XGBoost model at {scaler_path}. Please save the scaler.'}), 404
+        # Load the saved linear regression model.
+        model_path = os.path.join(app.config['MODEL_FOLDER'], 'linear_regression_model.pkl')
         if not os.path.exists(model_path):
-            return jsonify({'error': f'No trained XGBoost model found at {model_path}. Please train and save the model first.'}), 404
+            return jsonify({'error': f'No trained linear regression model found at {model_path}. Please train and save the model first.'}), 404
         
         import pickle
-        with open(scaler_path, "rb") as f:
-            xgb_scaler = pickle.load(f)
         with open(model_path, "rb") as f:
-            xgb_model = pickle.load(f)
+            lr_model = pickle.load(f)
         
-        # Scale the input features.
-        X_scaled = xgb_scaler.transform(X_input)
-        pred_scaled = xgb_model.predict(X_scaled)[0]
-
-        # Since the scaler was fit on a 1-feature input, create a dummy array with 1 column.
-        dummy = np.array([[pred_scaled]])
-        pred_price = float(xgb_scaler.inverse_transform(dummy)[0, 0])
+        # Predict the next day's closing price.
+        predicted_price = lr_model.predict(X_input)[0]
         
-        # Get current price and date from the computed features.
-        current_price = df_features['Close'].iloc[-1]
-        last_date = df_features['Date'].iloc[-1]
+        # Get the current closing price (latest available).
+        current_price = stock_data['Close'].iloc[-1]
         
-        # Generate trading decisions using your helper function.
-        predictions = [pred_price]
-        decisions = make_trading_decisions(predictions, current_price)
+        # Compute expected return in percentage.
+        expected_return = (predicted_price - current_price) / current_price * 100
+        
+        # Generate trading decision based on the price movement.
+        decision = "BUY" if predicted_price > current_price else "SELL" if predicted_price < current_price else "HOLD"
+        
+        # Prepare predictions in the same format as other endpoints.
+        predictions = [{
+            'day': 1,
+            'predicted_price': float(predicted_price),
+            'expected_return': float(expected_return),
+            'decision': decision
+        }]
         
         # Generate a prediction plot.
-        plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
+        plot_img = create_prediction_plot(stock_data, predictions, stock_symbol)
+        last_date = stock_data['Date'].iloc[-1]
         
         return jsonify({
-            'model_used': 'XGBoost Regression',
+            'model_used': 'Linear Regression',
             'symbol': stock_symbol,
             'current_date': last_date.strftime('%Y-%m-%d'),
             'current_price': float(current_price),
-            'predictions': decisions,
+            'predictions': predictions,
             'plot': plot_img
         })
         
     except Exception as e:
-        return jsonify({'error': f'Error making XGBoost prediction: {str(e)}'}), 500
-
-
-@app.route('/predict_xgbv2', methods=['POST'])
-def predict_xgbv2():
-    """
-    XGBoost prediction endpoint.
-    Expects form fields:
-      - 'symbol': the model symbol (used as identifier; here it indicates that the xgb model should be used)
-      - 'stock': the stock ticker for which to fetch data
-    This endpoint always predicts the next day's price based on the last available data row.
-    """
-    try:
-        model_symbol = str(request.form.get('symbol', '')).strip().upper()
-        stock_field = str(request.form.get('stock', '')).strip().upper()
-        
-        if model_symbol == "":
-            return jsonify({'error': 'No model symbol provided'}), 400
-        
-        # Use provided stock ticker if available; otherwise, default to "AAPL"
-        stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
-        
-        # Define the expected model path for the XGBoost model (saved as .pkl)
-        model_path = os.path.join(app.config['MODEL_FOLDER'], 'xgb_model.pkl')
-        if not os.path.exists(model_path):
-            return jsonify({'error': f'No trained XGB model found at {model_path}. Please train and upload the model first.'}), 404
-        
-        # Fetch stock data using yfinance
-        stock_data = get_yfinance_data(stock_symbol)
-        data_path = os.path.join(app.config['DATA_FOLDER'], f'{stock_symbol}_xgb_data.csv')
-        stock_data.to_csv(data_path, index=False)
-        
-        # Prepare the data for prediction consistent with training:
-        # 1. Convert Date to datetime.
-        # 2. Create a Date ordinal feature.
-        # 3. Set the Symbol column.
-        # 4. One-hot encode the Symbol column with drop_first=True.
-        df = stock_data.copy()
-        df['Date'] = pd.to_datetime(df['Date'])
-        df['Date_ordinal'] = df['Date'].apply(lambda d: d.toordinal())
-        df['Symbol'] = stock_symbol  # ensure the symbol is set
-        
-        # Create dummy variables for Symbol as done in training
-        df_encoded = pd.get_dummies(df, columns=['Symbol'], drop_first=True)
-        
-        # Define the feature columns exactly as used in training:
-        base_features = ['Open', 'High', 'Low', 'Volume', 'Date_ordinal']
-        dummy_features = [col for col in df_encoded.columns if col.startswith('Symbol_')]
-        feature_cols = base_features + dummy_features
-        
-        # If your training data included additional dummy columns (because of multiple symbols),
-        # you can load them from a saved file. For example:
-        # expected_feature_cols = joblib.load(os.path.join(app.config['MODEL_FOLDER'], 'xgb_feature_columns.pkl'))
-        # and then reindex with: 
-        # X_pred = df_encoded.reindex(columns=expected_feature_cols, fill_value=0).iloc[[-1]]
-        #
-        # For this example, we assume the current dummy columns are sufficient.
-        X_pred = df_encoded.reindex(columns=feature_cols, fill_value=0).iloc[[-1]]
-        
-        # Extract the current closing price and the date for reporting
-        current_price = df['Close'].iloc[-1]
-        last_date = df['Date'].iloc[-1]
-        
-        # Load the trained XGBoost model and make the prediction
-        model = joblib.load(model_path)
-        xgb_pred = model.predict(X_pred)[0]
-        
-        # Prepare the result by generating trading decisions and a plot.
-        predictions = [float(xgb_pred)]
-        decisions = make_trading_decisions(predictions, current_price)
-        plot_img = create_prediction_plot(df, decisions, stock_symbol)
-        
-        return jsonify({
-            'model_used': 'XGBoost Regression',
-            'symbol': stock_symbol,
-            'current_date': last_date.strftime('%Y-%m-%d'),
-            'current_price': float(current_price),
-            'predictions': decisions,
-            'plot': plot_img
-        })
-        
-    except Exception as e:
-        return jsonify({'error': f'Error making XGB prediction: {str(e)}'}), 500
+        return jsonify({'error': f'Error making linear regression prediction: {str(e)}'}), 500
 
 
 
