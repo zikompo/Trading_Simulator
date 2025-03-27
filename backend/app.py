@@ -108,29 +108,27 @@ def prepare_latest_data(df, sequence_length=60):
 
 def predict_future_prices(model, latest_sequence, scaler, days_ahead=1, features_count=5):
     """
-    Predict future prices for the next day using the Keras LSTM model.
-    Returns a list with a single predicted price.
+    Predict future prices for the next days using the Keras model.
+    The function iteratively predicts one day ahead and then updates the input sequence.
     """
     predictions = []
     current_sequence = latest_sequence.copy()
     
-    # Since we always predict only the next day, run the loop once.
     for _ in range(days_ahead):
         next_pred = float(model.predict(current_sequence, verbose=0)[0, 0])
+        # Inverse transform the predicted scaled "Close" price.
         dummy = np.zeros((1, features_count))
         dummy[0, 3] = next_pred  # index 3 corresponds to 'Close'
         next_price = float(scaler.inverse_transform(dummy)[0, 3])
         predictions.append(next_price)
         
-        # Update sequence: remove the first day and append new prediction as the last day.
+        # Update sequence: remove the first day and append new prediction.
         new_pred = np.zeros((1, 1, features_count))
         new_pred[0, 0, :] = current_sequence[0, -1, :].copy()
         new_pred[0, 0, 3] = next_pred  # update close price with prediction
         current_sequence = np.append(current_sequence[:, 1:, :], new_pred, axis=1)
     
     return predictions
-
-
 
 def make_trading_decisions(predictions, current_price, threshold=0.01):
     """Generate trading signals based on predicted prices."""
@@ -218,16 +216,15 @@ def predict_lstm():
     """
     LSTM prediction route.
     Expects form fields:
-      - 'symbol': the model symbol (used to locate the model file)
+      - 'symbol': the model symbol (for lookup)
       - 'stock': the stock ticker for which to fetch data
-    This endpoint always predicts the next day's price.
+      - 'days_ahead': number of days to predict (max 5)
     """
     try:
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
-        
-        # Always predict next day
-        days_ahead = 1
+        days_ahead = int(request.form.get('days_ahead', 1))
+        days_ahead = min(days_ahead, 5)
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
@@ -272,32 +269,26 @@ def predict_kernel():
     Expects form fields:
       - 'symbol': the model symbol (for lookup)
       - 'stock': the stock ticker for which to fetch data
-    This endpoint predicts the next day's closing price using the improved
-    Kernel Ridge Regression model (with Nystroem kernel approximation) trained on
-    High, Open, and Low prices.
+      - 'days_ahead': number of days to predict (max 5)
     """
     try:
-        # Retrieve input parameters.
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
+        days_ahead = int(request.form.get('days_ahead', 1))
+        days_ahead = min(days_ahead, 5)
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
         
-        # Default to AAPL if no valid stock ticker is provided.
         stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
-        
-        # Fetch stock data using yfinance.
         stock_data = get_yfinance_data(stock_symbol)
         if stock_data.empty:
             return jsonify({'error': f'No data found for stock symbol {stock_symbol}.'}), 404
         
-        # For this improved model, we use only the High, Open, and Low prices.
+        # Use only High, Open, and Low as features.
         features = ['High', 'Open', 'Low']
-        # Use the latest available row as the input features.
         X_input = stock_data[features].iloc[-1].values.reshape(1, -1)
         
-        # Load the saved pipeline model.
         model_path = os.path.join(app.config['MODEL_FOLDER'], 'kernel_ridge_model_approx.pkl')
         if not os.path.exists(model_path):
             return jsonify({'error': f'No trained Kernel Ridge model found at {model_path}. Please train and save the model first.'}), 404
@@ -306,28 +297,20 @@ def predict_kernel():
         with open(model_path, "rb") as f:
             kr_pipeline = pickle.load(f)
         
-        # Predict the next day's closing price.
-        predicted_price = kr_pipeline.predict(X_input)[0]
+        # Iterative prediction for days_ahead.
+        predictions = []
+        current_features = X_input.copy()  # shape (1, 3)
+        for _ in range(days_ahead):
+            pred = kr_pipeline.predict(current_features)[0]
+            predictions.append(pred)
+            # Naively update current_features: assume next day's low equals predicted closing price.
+            # (This heuristic may be adjusted for your use-case.)
+            current_features = np.array([[current_features[0,0], current_features[0,1], pred]])
         
-        # Get the current closing price.
         current_price = stock_data['Close'].iloc[-1]
-        
-        # Compute expected return (percentage change).
-        expected_return = (predicted_price - current_price) / current_price * 100
-        
-        # Generate a trading decision.
-        decision = "BUY" if predicted_price > current_price else "SELL" if predicted_price < current_price else "HOLD"
-        
-        # Prepare the predictions list.
-        predictions = [{
-            'day': 1,
-            'predicted_price': float(predicted_price),
-            'expected_return': float(expected_return),
-            'decision': decision
-        }]
-        
-        # Generate a prediction plot using your helper function.
-        plot_img = create_prediction_plot(stock_data, predictions, stock_symbol)
+        expected_returns = [(p - current_price)/current_price * 100 for p in predictions]
+        decisions = make_trading_decisions(predictions, current_price)
+        plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
         last_date = stock_data['Date'].iloc[-1]
         
         return jsonify({
@@ -335,33 +318,31 @@ def predict_kernel():
             'symbol': stock_symbol,
             'current_date': last_date.strftime('%Y-%m-%d'),
             'current_price': float(current_price),
-            'predictions': predictions,
+            'predictions': decisions,
             'plot': plot_img
         })
         
     except Exception as e:
         return jsonify({'error': f'Error making Kernel Ridge prediction: {str(e)}'}), 500
-
-
 @app.route('/predict_knn', methods=['POST'])
 def predict_knn():
     """
     KNN prediction route.
     Expects form fields:
-      - 'symbol': the model symbol (used to locate the model file)
+      - 'symbol': the model symbol (for lookup)
       - 'stock': the stock ticker for which to fetch data
-    This endpoint always predicts the next day's price.
+      - 'days_ahead': number of days to predict (max 5)
     """
     try:
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
-
+        days_ahead = int(request.form.get('days_ahead', 1))
+        days_ahead = min(days_ahead, 5)
+        
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
 
         stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
-
-        # Locate and load the KNN model and its scaler.
         model_path = os.path.join(app.config['MODEL_FOLDER'], 'knn_model.pkl')
         scaler_path = os.path.join(app.config['MODEL_FOLDER'], 'scaler.pkl')
         if not os.path.exists(model_path):
@@ -379,17 +360,35 @@ def predict_knn():
         if stock_data.empty:
             return jsonify({'error': f'No data found for stock symbol {stock_symbol}.'}), 404
 
+        # Use these features for KNN.
         features = ['High', 'Low', 'Open', 'Volume']
-        latest_features = stock_data[features].iloc[-1:].values
+        # Start with the latest available row.
+        current_features = stock_data[features].iloc[-1:].values  # shape (1,4)
 
-        latest_features_scaled = knn_scaler.transform(latest_features)
-        next_close_pred = knn_model.predict(latest_features_scaled)[0]
-        predicted_prices = [float(next_close_pred)]
+        predictions = []
+        # Compute recent average ratios for high and low relative to the close.
+        avg_high_ratio = (stock_data['High'] / stock_data['Close']).tail(10).mean()
+        avg_low_ratio = (stock_data['Low'] / stock_data['Close']).tail(10).mean()
+        # Use the most recent volume or average volume over recent days.
+        avg_volume = stock_data['Volume'].tail(10).mean()
 
+        for _ in range(days_ahead):
+            scaled = knn_scaler.transform(current_features)
+            pred = knn_model.predict(scaled)[0]
+            predictions.append(float(pred))
+            # Update current_features:
+            # For simplicity, assume:
+            #   - Next day's open equals the predicted close.
+            #   - Next day's high and low are computed via average ratios.
+            #   - Next day's volume is the average volume.
+            new_high = pred * avg_high_ratio
+            new_low = pred * avg_low_ratio
+            new_open = pred
+            current_features = np.array([[new_high, new_low, new_open, avg_volume]])
+        
         current_price = stock_data['Close'].iloc[-1]
-        decisions = make_trading_decisions(predicted_prices, current_price)
+        decisions = make_trading_decisions(predictions, current_price)
         plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
-
         last_date = stock_data['Date'].iloc[-1]
         if not isinstance(last_date, str):
             last_date = last_date.strftime('%Y-%m-%d')
@@ -406,34 +405,6 @@ def predict_knn():
     except Exception as e:
         return jsonify({'error': f'Error making KNN prediction: {str(e)}'}), 500
 
-def compute_linear_features(df):
-    """
-    Compute features for linear regression prediction based on the training pipeline.
-    Expects df to have columns: Date, Symbol, Open, High, Low, Close, Volume.
-    Returns the dataframe with computed features and the list of feature columns.
-    """
-    df = df.copy()
-    df = df.sort_values(by='Date')
-    df['returns'] = df['Close'].pct_change()
-    df['high_low_ratio'] = df['High'] / df['Low']
-    df['close_open_ratio'] = df['Close'] / df['Open']
-    df['volume_change'] = df['Volume'].pct_change()
-    
-    for lag in range(1, 6):
-        df[f'return_lag_{lag}'] = df['returns'].shift(lag)
-        df[f'hl_ratio_lag_{lag}'] = df['high_low_ratio'].shift(lag)
-        df[f'co_ratio_lag_{lag}'] = df['close_open_ratio'].shift(lag)
-        df[f'volume_change_lag_{lag}'] = df['volume_change'].shift(lag)
-    
-    # Define target as the next day's return direction (1 if >0, else 0)
-    df['target'] = (df['returns'].shift(-1) > 0).astype(int)
-    
-    # Drop rows with NaN values
-    df = df.dropna()
-    
-    # Feature columns exclude Date, Symbol, and target.
-    feature_cols = [col for col in df.columns if col not in ['Date', 'Symbol', 'target']]
-    return df, feature_cols
 
 @app.route('/predict_linear', methods=['POST'])
 def predict_linear():
@@ -442,31 +413,27 @@ def predict_linear():
     Expects form fields:
       - 'symbol': the model symbol (for lookup)
       - 'stock': the stock ticker for which to fetch data
-    This endpoint predicts the next day's closing price using the Linear Regression model
-    trained on High, Open, and Low prices.
+      - 'days_ahead': number of days to predict (max 5)
     """
     try:
-        # Retrieve input parameters.
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
+        days_ahead = int(request.form.get('days_ahead', 1))
+        days_ahead = min(days_ahead, 5)
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
         
-        # Default to AAPL if no valid stock ticker is provided.
         stock_symbol = stock_field if stock_field and stock_field != model_symbol else "AAPL"
-        
-        # Fetch stock data using yfinance.
         stock_data = get_yfinance_data(stock_symbol)
         if stock_data.empty:
             return jsonify({'error': f'No data found for stock symbol {stock_symbol}.'}), 404
-        
-        # For this improved model, we use only the High, Open, and Low prices.
+
+        # For linear regression we use these three features.
         features = ['High', 'Open', 'Low']
-        # Use the last available row as the input features.
-        X_input = stock_data[features].iloc[-1].values.reshape(1, -1)
+        # Start with the latest available row.
+        current_features = stock_data[features].iloc[-1].values.reshape(1, -1)
         
-        # Load the saved linear regression model.
         model_path = os.path.join(app.config['MODEL_FOLDER'], 'linear_regression_model.pkl')
         if not os.path.exists(model_path):
             return jsonify({'error': f'No trained linear regression model found at {model_path}. Please train and save the model first.'}), 404
@@ -475,28 +442,26 @@ def predict_linear():
         with open(model_path, "rb") as f:
             lr_model = pickle.load(f)
         
-        # Predict the next day's closing price.
-        predicted_price = lr_model.predict(X_input)[0]
+        predictions = []
+        # Compute recent average ratios for updating features.
+        # We assume: next_high = predicted_close * avg_high_ratio and next_low = predicted_close * avg_low_ratio.
+        avg_high_ratio = (stock_data['High'] / stock_data['Close']).tail(10).mean()
+        avg_low_ratio = (stock_data['Low'] / stock_data['Close']).tail(10).mean()
         
-        # Get the current closing price (latest available).
+        # Iteratively predict and update features.
+        for _ in range(days_ahead):
+            pred = lr_model.predict(current_features)[0]
+            predictions.append(float(pred))
+            # Update features: assume next day's open equals the predicted close.
+            # And update high and low using recent average ratios.
+            new_high = pred * avg_high_ratio
+            new_open = pred
+            new_low = pred * avg_low_ratio
+            current_features = np.array([[new_high, new_open, new_low]])
+        
         current_price = stock_data['Close'].iloc[-1]
-        
-        # Compute expected return in percentage.
-        expected_return = (predicted_price - current_price) / current_price * 100
-        
-        # Generate trading decision based on the price movement.
-        decision = "BUY" if predicted_price > current_price else "SELL" if predicted_price < current_price else "HOLD"
-        
-        # Prepare predictions in the same format as other endpoints.
-        predictions = [{
-            'day': 1,
-            'predicted_price': float(predicted_price),
-            'expected_return': float(expected_return),
-            'decision': decision
-        }]
-        
-        # Generate a prediction plot.
-        plot_img = create_prediction_plot(stock_data, predictions, stock_symbol)
+        decisions = make_trading_decisions(predictions, current_price)
+        plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
         last_date = stock_data['Date'].iloc[-1]
         
         return jsonify({
@@ -504,12 +469,13 @@ def predict_linear():
             'symbol': stock_symbol,
             'current_date': last_date.strftime('%Y-%m-%d'),
             'current_price': float(current_price),
-            'predictions': predictions,
+            'predictions': decisions,
             'plot': plot_img
         })
         
     except Exception as e:
         return jsonify({'error': f'Error making linear regression prediction: {str(e)}'}), 500
+
 
 def create_q_plot(q_values, actions):
     import matplotlib.pyplot as plt
@@ -604,6 +570,52 @@ def predict_qlearning():
     except Exception as e:
         return jsonify({'error': f'Error making Q-learning prediction: {str(e)}'}), 500
 
+
+def compute_linear_features(df):
+    """
+    Compute features for linear regression prediction based on the training pipeline.
+    Expects df to have columns: Date, Symbol, Open, High, Low, Close, Volume.
+    Returns the dataframe with computed features and the list of feature columns.
+    """
+    df = df.copy()
+    df = df.sort_values(by='Date')
+    df['returns'] = df['Close'].pct_change()
+    df['high_low_ratio'] = df['High'] / df['Low']
+    df['close_open_ratio'] = df['Close'] / df['Open']
+    df['volume_change'] = df['Volume'].pct_change()
+    
+    for lag in range(1, 6):
+        df[f'return_lag_{lag}'] = df['returns'].shift(lag)
+        df[f'hl_ratio_lag_{lag}'] = df['high_low_ratio'].shift(lag)
+        df[f'co_ratio_lag_{lag}'] = df['close_open_ratio'].shift(lag)
+        df[f'volume_change_lag_{lag}'] = df['volume_change'].shift(lag)
+    
+    # Define target as the next day's return direction (1 if >0, else 0)
+    df['target'] = (df['returns'].shift(-1) > 0).astype(int)
+    
+    # Drop rows with NaN values
+    df = df.dropna()
+    
+    # Feature columns exclude Date, Symbol, and target.
+    feature_cols = [col for col in df.columns if col not in ['Date', 'Symbol', 'target']]
+    return df, feature_cols
+
+def create_q_plot(q_values, actions):
+    import matplotlib.pyplot as plt
+    import io, base64
+    plt.figure(figsize=(6,4))
+    plt.bar(range(len(q_values)), q_values, tick_label=[actions[i] for i in range(len(actions))], color='skyblue')
+    plt.title("Q-values for Current State")
+    plt.xlabel("Actions")
+    plt.ylabel("Q-value")
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plot_base64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+    plt.close()
+    return plot_base64
+
+
 @app.route('/predict_rnn', methods=['POST'])
 def predict_rnn():
     """
@@ -611,20 +623,23 @@ def predict_rnn():
     Expects form fields:
       - 'symbol': the model symbol (for lookup)
       - 'stock': the stock ticker for which to fetch data (defaults to AAPL)
+      - 'days_ahead': number of days to predict (max 5)
     
-    This endpoint predicts the next day's closing price using the pre-trained
-    General RNN model and returns the predicted price, expected return,
-    a trading decision, and a plot of historical prices with the prediction.
+    This endpoint predicts future closing prices using the pre-trained
+    General RNN model and returns the predicted prices, expected returns,
+    trading decisions, and a plot of historical prices with the predictions.
     """
     try:
         import os
-        import pickle
         import numpy as np
+        import joblib
         from tensorflow.keras.models import load_model
 
         # Retrieve input parameters.
         model_symbol = str(request.form.get('symbol', '')).strip().upper()
         stock_field = str(request.form.get('stock', '')).strip().upper()
+        days_ahead = int(request.form.get('days_ahead', 1))
+        days_ahead = min(days_ahead, 5)
         
         if model_symbol == "":
             return jsonify({'error': 'No model symbol provided'}), 400
@@ -659,30 +674,17 @@ def predict_rnn():
         latest_sequence = stock_data[features].values[-sequence_length:]
         latest_sequence_scaled = scaler.transform(latest_sequence).reshape(1, sequence_length, len(features))
         
-        # Make prediction for the next day's closing price (scaled value).
-        next_price_scaled = rnn_model.predict(latest_sequence_scaled, verbose=0)[0, 0]
-        # Inverse transform the predicted value.
-        dummy = np.zeros((1, len(features)))
-        dummy[0, 3] = next_price_scaled  # index 3 corresponds to "Close"
-        next_price = scaler.inverse_transform(dummy)[0, 3]
+        # Predict for the requested number of days ahead.
+        future_prices = predict_future_prices(rnn_model, latest_sequence_scaled, scaler, days_ahead, features_count=len(features))
         
         # Get the current price (latest available closing price).
         current_price = stock_data['Close'].iloc[-1]
-        # Compute expected return (percentage change).
-        expected_return = (next_price - current_price) / current_price * 100
         
-        # Generate trading decision based on a 1% threshold.
-        decision = 'BUY' if expected_return > 1 else 'SELL' if expected_return < -1 else 'HOLD'
+        # Compute trading decisions for each predicted day.
+        decisions = make_trading_decisions(future_prices, current_price)
         
-        predictions = [{
-            'day': 1,
-            'predicted_price': float(next_price),
-            'expected_return': float(expected_return),
-            'decision': decision
-        }]
-        
-        # Create a prediction plot (using your existing helper function).
-        plot_img = create_prediction_plot(stock_data, predictions, stock_symbol)
+        # Generate a plot using your helper function.
+        plot_img = create_prediction_plot(stock_data, decisions, stock_symbol)
         last_date = stock_data['Date'].iloc[-1]
         
         return jsonify({
@@ -690,12 +692,13 @@ def predict_rnn():
             'symbol': stock_symbol,
             'current_date': last_date.strftime('%Y-%m-%d'),
             'current_price': float(current_price),
-            'predictions': predictions,
+            'predictions': decisions,
             'plot': plot_img
         })
         
     except Exception as e:
         return jsonify({'error': f'Error making RNN prediction: {str(e)}'}), 500
+
 
 
 

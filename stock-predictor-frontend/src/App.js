@@ -3,10 +3,11 @@ import axios from 'axios';
 import './App.css';
 
 function App() {
-  // Separate states for stock symbol, selected model, uploaded model file, etc.
+  // Separate states for stock symbol, selected model, uploaded model file, prediction days, etc.
   const [stockSymbol, setStockSymbol] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [modelFile, setModelFile] = useState(null);
+  const [predictionDays, setPredictionDays] = useState(1);
   const [loading, setLoading] = useState(false);
   const [predictionResult, setPredictionResult] = useState(null);
   const [availableModels, setAvailableModels] = useState([]);
@@ -43,7 +44,10 @@ function App() {
       formData.append('symbol', selectedModel.toUpperCase());
       // 'stock' holds the ticker for which to fetch data.
       formData.append('stock', stockSymbol.toUpperCase());
-      console.log(selectedModel);
+      // Append the number of days to predict (up to 5)
+      formData.append('days_ahead', predictionDays);
+      
+      console.log("Model selected:", selectedModel, "Days ahead:", predictionDays);
       // Determine the endpoint based on the selected model.
       let endpoint = '/predict_kernel'; // default endpoint
       if (selectedModel.toUpperCase() === 'GENERAL_LSTM_MODEL') {
@@ -131,6 +135,19 @@ function App() {
                   required
                 />
                 <small>Enter stock ticker symbol (AAPL, MSFT, etc.)</small>
+              </div>
+              <div className="input-group">
+                <label htmlFor="predictionDays">Number of Days (1 to 5)</label>
+                <input
+                  type="number"
+                  id="predictionDays"
+                  min="1"
+                  max="5"
+                  value={predictionDays}
+                  onChange={(e) => setPredictionDays(e.target.value)}
+                  required
+                />
+                <small>Select the number of days to predict (max 5)</small>
               </div>
               <button type="submit" className="btn primary-btn">
                 {loading ? (
