@@ -141,7 +141,7 @@ if __name__ == "__main__":
     os.makedirs("models", exist_ok=True)
     
     model, metrics = train_kernel_regression(
-        "/Users/devshah/Documents/WorkSpace/University/year 3/CSC392/Trading_Simulator/data/updated_data.csv", 
+        "data/updated_data.csv", 
         model_save_path="models/kernel_regression_model.pkl",
         epochs=10  # You can adjust the number of epochs
     )
