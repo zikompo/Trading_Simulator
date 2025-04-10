@@ -74,29 +74,7 @@ function App() {
     }
   };
   
-  const handleUploadSubmit = async (e) => {
-    e.preventDefault();
-    if (!selectedModel || !modelFile) {
-      alert('Please enter a model symbol and choose a model file');
-      return;
-    }
-    const formData = new FormData();
-    formData.append('symbol', selectedModel.toUpperCase());
-    formData.append('model', modelFile);
-
-    try {
-      await axios.post('/upload', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      alert('Model uploaded successfully!');
-      setSelectedModel('');
-      setModelFile(null);
-      loadAvailableModels();
-    } catch (error) {
-      const errMsg = error.response?.data?.error || 'An error occurred';
-      alert(errMsg);
-    }
-  };
+  
 
   const computeFutureDate = (baseDate, daysAhead) => {
     let futureDate = new Date(baseDate);
@@ -182,38 +160,6 @@ function App() {
             )}
           </div>
 
-          <div className="card upload-card">
-            <h2>Upload New Model</h2>
-            <form onSubmit={handleUploadSubmit}>
-              <div className="input-group">
-                <label htmlFor="selectedModelUpload">Stock Symbol (for model)</label>
-                <input
-                  type="text"
-                  id="selectedModelUpload"
-                  placeholder="e.g., AAPL"
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="input-group file-upload">
-                <label htmlFor="modelFile">Model File (.h5 or .pkl)</label>
-                <input
-                  type="file"
-                  id="modelFile"
-                  accept=".h5,.pkl"
-                  onChange={(e) => setModelFile(e.target.files[0])}
-                  required
-                />
-                <span className="file-info">
-                  {modelFile ? modelFile.name : "No file selected"}
-                </span>
-              </div>
-              <button type="submit" className="btn secondary-btn">
-                Upload Model
-              </button>
-            </form>
-          </div>
         </div>
 
         {/* Right column: Results */}
