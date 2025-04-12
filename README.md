@@ -25,6 +25,10 @@ cd stock-predictor-frontend
 ```
 
 ```bash
+npm i
+```
+
+```bash
 npm start
 ```
 
